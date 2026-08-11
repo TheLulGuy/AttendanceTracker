@@ -21,6 +21,10 @@
         "backgroundColor": "#0A0E13"
       }
     },
+    "web": {
+      "favicon": "./assets/icon.jpeg",
+      "bundler": "metro"
+    },
     "plugins": [
       "expo-status-bar",
       "expo-font",

@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, Pressable, TextInput, Modal, Alert } from 'react-native';
+import { View, Text, ScrollView, Pressable, TextInput, Modal, Alert, Platform } from 'react-native';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fmt, parseDate } from '../lib/dates';
 import { DAYNAME } from '../lib/constants';
 import { DEFAULT_CONFIG } from '../lib/defaultConfig';
+import WebDatePicker from './WebDatePicker';
 
 function openDatePicker(value, onChange) {
   DateTimePickerAndroid.open({
@@ -19,11 +20,25 @@ function openDatePicker(value, onChange) {
 }
 
 function DateChip({ label, value, onChange }) {
+  const [webPickerOpen, setWebPickerOpen] = useState(false);
   return (
-    <Pressable onPress={() => openDatePicker(value, onChange)} className="border border-border rounded-lg px-2.5 py-2 bg-panel2 flex-1">
-      <Text className="font-mono text-[9px] text-muted2 uppercase tracking-[1px] mb-0.5">{label}</Text>
-      <Text className="font-mono text-[12px] text-ink">{value}</Text>
-    </Pressable>
+    <>
+      <Pressable
+        onPress={() => Platform.OS === 'web' ? setWebPickerOpen(true) : openDatePicker(value, onChange)}
+        className="border border-border rounded-lg px-2.5 py-2 bg-panel2 flex-1"
+      >
+        <Text className="font-mono text-[9px] text-muted2 uppercase tracking-[1px] mb-0.5">{label}</Text>
+        <Text className="font-mono text-[12px] text-ink">{value}</Text>
+      </Pressable>
+      {Platform.OS === 'web' && (
+        <WebDatePicker
+          visible={webPickerOpen}
+          value={value}
+          onChange={onChange}
+          onClose={() => setWebPickerOpen(false)}
+        />
+      )}
+    </>
   );
 }
 
