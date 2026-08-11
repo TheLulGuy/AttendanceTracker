@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Attendance Edge",
+    "slug": "gitam-attendance",
+    "owner": "ombanerjee",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.jpeg",
+    "splash": {
+      "backgroundColor": "#0A0E13"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.gitam.attendance"
+    },
+    "android": {
+      "package": "com.gitam.attendance",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.jpeg",
+        "backgroundColor": "#0A0E13"
+      }
+    },
+    "plugins": [
+      "expo-status-bar",
+      "expo-font",
+      "expo-splash-screen",
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "bcbc9150-c6af-4279-be01-7cf192b16936"
+      }
+    }
+  }
+}

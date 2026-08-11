@@ -1,0 +1,491 @@
+import './global.css';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import {
+  View, Text, ScrollView, Pressable, Modal,
+  useWindowDimensions, Alert,
+} from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
+import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fmt, parseDate, addDays } from './lib/dates';
+import { MONTHS, DAYNAME } from './lib/constants';
+import { DEFAULT_CONFIG } from './lib/defaultConfig';
+import SettingsModal from './components/SettingsModal';
+
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+const THRESHOLD  = 75;
+const STORE_KEY  = 'gitam-att-v5';
+const CONFIG_KEY = 'gitam-att-config-v1';
+
+// One-off cancellations: GCGC1021 cancelled on Jul 3
+const OVERRIDES = { '2026-07-03': s => s.filter(x => x.course !== 'GCGC1021') };
+
+const TODAY = fmt(new Date());
+
+function buildSem(semStart, semEnd) {
+  const start = parseDate(semStart);
+  const end   = parseDate(semEnd);
+  if (isNaN(start) || isNaN(end) || end < start) return [];
+  const out = [];
+  const d = new Date(start);
+  while (d <= end) {
+    const w = d.getDay();
+    if (w >= 1 && w <= 5) out.push({ date:fmt(d), dow:w, day:d.getDate(), month:d.getMonth() });
+    d.setDate(d.getDate()+1);
+  }
+  return out;
+}
+
+function deriveCourses(schedule) {
+  const seen = new Map();
+  Object.values(schedule).flat().forEach(s => { if (!seen.has(s.course)) seen.set(s.course, s.label); });
+  return { COURSES:[...seen.keys()], CLABEL:Object.fromEntries(seen) };
+}
+
+function dispDate(ds) {
+  const d = parseDate(ds);
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+
+// state[date][slotKey] = true(present) | false(absent); missing → true
+function present(state, ds, key) {
+  const d = state[ds];
+  return !d || d[key] === undefined ? true : d[key];
+}
+
+// ─── Tone helpers — literal class-name branches so Tailwind's static scan finds them ──
+function pillClass(p) {
+  return p < 60 ? { bg:'bg-reddim', c:'text-red' }
+       : p < 67 ? { bg:'bg-amberdim', c:'text-amber' }
+       :           { bg:'bg-cyandim', c:'text-cyan' };
+}
+function mixClass(mix) {
+  if (mix === 'none')    return { bg:'bg-reddim', text:'text-red' };
+  if (mix === 'partial') return { bg:'bg-amberdim', text:'text-amber' };
+  return { bg:'bg-cyandim', text:'text-cyan' };
+}
+function barTone(pct) {
+  return pct < 75 ? { text:'text-red', bg:'bg-red' }
+       : pct < 82 ? { text:'text-amber', bg:'bg-amber' }
+       :             { text:'text-cyan', bg:'bg-cyan' };
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
+export default function App() {
+  const { width } = useWindowDimensions();
+
+  const [state,    setState]    = useState({});
+  const [sel,      setSel]      = useState(null);   // selected date string
+  const [dayModal, setDayModal] = useState(false);
+  const [status,   setStatus]   = useState('');
+  const [config,   setConfig]   = useState(DEFAULT_CONFIG);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const saveTimer   = useRef(null);
+  const didInit     = useRef(false);
+  const cfgSaveTimer = useRef(null);
+  const didInitCfg  = useRef(false);
+
+  const [fontsLoaded] = useFonts({
+    SpaceGrotesk: require('./assets/fonts/SpaceGrotesk-Variable.ttf'),
+    'IBMPlexMono-Regular':  require('./assets/fonts/IBMPlexMono-Regular.ttf'),
+    'IBMPlexMono-Medium':   require('./assets/fonts/IBMPlexMono-Medium.ttf'),
+    'IBMPlexMono-SemiBold': require('./assets/fonts/IBMPlexMono-SemiBold.ttf'),
+    'IBMPlexMono-Bold':     require('./assets/fonts/IBMPlexMono-Bold.ttf'),
+  });
+  const onLayoutRootView = useCallback(() => {
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded]);
+
+  const SEM = useMemo(() => buildSem(config.semStart, config.semEnd), [config.semStart, config.semEnd]);
+  const { COURSES, CLABEL } = useMemo(() => deriveCourses(config.schedule), [config.schedule]);
+
+  // ── AsyncStorage: load attendance once on mount ──
+  useEffect(() => {
+    AsyncStorage.getItem(STORE_KEY)
+      .then(raw => {
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object' && Object.keys(parsed).length) {
+              setState(parsed);
+              flash('✓ loaded');
+            }
+          } catch(_) {}
+        }
+        didInit.current = true;
+      })
+      .catch(() => { didInit.current = true; });
+  }, []);
+
+  // ── AsyncStorage: auto-save attendance on every state change ──
+  useEffect(() => {
+    if (!didInit.current) return;   // never overwrite on the initial empty render
+    setStatus('saving…');
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      AsyncStorage.setItem(STORE_KEY, JSON.stringify(state))
+        .then(() => flash('✓ saved'))
+        .catch(() => setStatus(''));
+    }, 400);
+  }, [state]);
+
+  // ── AsyncStorage: load semester config once on mount ──
+  useEffect(() => {
+    AsyncStorage.getItem(CONFIG_KEY)
+      .then(raw => {
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object' && parsed.schedule) {
+              // migrate any holidays saved with the old {startDate,endDate} shape back to {date,endDate?}
+              parsed.holidays = (parsed.holidays || []).map(h => ({
+                date: h.date || h.startDate,
+                ...(h.endDate && h.endDate !== (h.date || h.startDate) ? { endDate:h.endDate } : {}),
+                label: h.label,
+              }));
+              setConfig(parsed);
+            }
+          } catch(_) {}
+        }
+        didInitCfg.current = true;
+      })
+      .catch(() => { didInitCfg.current = true; });
+  }, []);
+
+  // ── AsyncStorage: auto-save semester config on every change ──
+  useEffect(() => {
+    if (!didInitCfg.current) return;
+    clearTimeout(cfgSaveTimer.current);
+    cfgSaveTimer.current = setTimeout(() => {
+      AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(config)).catch(() => {});
+    }, 400);
+  }, [config]);
+
+  function flash(msg, ms=3000) { setStatus(msg); setTimeout(() => setStatus(''), ms); }
+
+  // ── Actions ──
+  function toggleSlot(ds, key) {
+    setState(p => {
+      const d = p[ds] || {};
+      const cur = d[key] === undefined ? true : d[key];
+      return { ...p, [ds]: { ...d, [key]: !cur } };
+    });
+  }
+
+  function markAll(ds, dow, val) {
+    const d = {};
+    slotsFor(ds, dow).forEach(s => { d[s.key] = val; });
+    setState(p => ({ ...p, [ds]: d }));
+  }
+
+  function handleLongPress(ds, dow) {
+    const mix = dayMix(state, ds, dow);
+    markAll(ds, dow, mix === 'none'); // absent→present, else→absent
+  }
+
+  function resetAll() {
+    Alert.alert('Reset All', 'Clear all logged attendance?', [
+      { text:'Cancel', style:'cancel' },
+      { text:'Reset', style:'destructive', onPress: () => { setState({}); setSel(null); } },
+    ]);
+  }
+
+  if (!fontsLoaded) return null;
+
+  // ── Config-derived helpers (close over the current `config`) ──
+  function lockedStatus(ds) {
+    const h = config.holidays.find(x => ds >= x.date && ds <= (x.endDate || x.date));
+    if (h) return { type:'holiday', lbl:h.label };
+    const ex = config.exams.find(e => ds >= e.startDate && ds <= e.endDate);
+    if (ex) return { type:'exam', lbl:ex.name };
+    return null;
+  }
+  function slotsFor(ds, dow) {
+    const base = config.schedule[dow] || [];
+    return OVERRIDES[ds] ? OVERRIDES[ds](base) : base;
+  }
+  function dayMix(state, ds, dow) {
+    const slots = slotsFor(ds, dow);
+    if (!slots.length) return 'full';
+    const n = slots.filter(s => present(state, ds, s.key)).length;
+    return n === slots.length ? 'full' : n === 0 ? 'none' : 'partial';
+  }
+  function calcStats(state, cutoff) {
+    const h = {}, a = {};
+    COURSES.forEach(c => { h[c]=0; a[c]=0; });
+    for (const d of SEM) {
+      if (cutoff && d.date > cutoff) continue;
+      if (lockedStatus(d.date)) continue;
+      for (const s of slotsFor(d.date, d.dow)) {
+        h[s.course]++;
+        if (present(state, d.date, s.key)) a[s.course]++;
+      }
+    }
+    let th=0, ta=0;
+    COURSES.forEach(c => { th+=h[c]; ta+=a[c]; });
+    return { h, a, th, ta };
+  }
+  function cellClass(d) {
+    const lk = lockedStatus(d.date);
+    if (lk?.type === 'holiday') return { bg:'bg-holidaybg', text:'text-muted2' };
+    if (lk?.type === 'exam')    return { bg:'bg-violetdim', text:'text-violet' };
+    return null;
+  }
+
+  // ── Stats ──
+  const full = calcStats(state);
+  const sf   = calcStats(state, TODAY);
+  const pct   = full.th ? full.ta / full.th * 100 : 0;
+  const sfPct = sf.th   ? sf.ta   / sf.th   * 100 : 100;
+  const tone  = barTone(pct);
+
+  const GATES = [
+    ...config.exams.map(e => {
+      const cutoffDate = addDays(e.startDate, -1);
+      const st = calcStats(state, cutoffDate);
+      return { label:e.name, cutoff:dispDate(cutoffDate), pct: st.th ? st.ta/st.th*100 : 100, known:true };
+    }),
+    { label:'End Semester', cutoff:dispDate(config.semEnd), pct, known:true },
+  ];
+
+  // ── Calendar weeks ──
+  const weeks = [];
+  for (let i = 0; i < SEM.length; ) {
+    const row = [];
+    for (let j = 0; j < 5 && i < SEM.length; j++, i++) row.push(SEM[i]);
+    weeks.push(row);
+  }
+
+  // ── Selected day ──
+  const selDay    = sel ? SEM.find(d => d.date === sel) : null;
+  const selLocked = sel ? lockedStatus(sel) : null;
+  const selSlots  = selDay && !selLocked ? slotsFor(selDay.date, selDay.dow) : [];
+
+  return (
+    <SafeAreaProvider>
+    <View className="flex-1 bg-bg" onLayout={onLayoutRootView}>
+      <StatusBar hidden />
+
+      <ScrollView className="flex-1" contentContainerClassName="p-4 pb-[60px]" showsVerticalScrollIndicator={false}>
+
+        {/* ── Header ── */}
+        <View className="flex-row items-start justify-between mb-[3px]">
+          <View className="flex-1">
+            <Text className="font-mono text-[10px] tracking-[2px] uppercase mb-1 text-cyan">{dispDate(config.semStart)} – {dispDate(config.semEnd)}, {parseDate(config.semEnd).getFullYear()}</Text>
+            <Text className="font-sans text-2xl font-extrabold text-ink">Attendance Edge</Text>
+          </View>
+          <Pressable onPress={() => setSettingsOpen(true)} className="border px-2.5 py-2 rounded-[7px] border-border">
+            <Ionicons name="settings-outline" size={16} color="#7C8B9B" />
+          </Pressable>
+        </View>
+        <Text className="font-sans text-xs leading-[18px] mb-[18px] text-muted">Tap a date to log classes · long-press to toggle all</Text>
+
+        {/* ── Gauge ── */}
+        <View className="bg-panel border border-border rounded-xl p-3.5 mb-3">
+          <View className="flex-row items-center justify-between gap-1.5">
+            <Text className={`font-sans text-4xl font-extrabold leading-[42px] ${tone.text}`}>
+              {pct.toFixed(1)}<Text className="font-sans text-sm font-normal text-muted">%</Text>
+            </Text>
+            <Text className="font-mono text-[10px] text-muted">target 82% · floor 75%</Text>
+          </View>
+          {/* Bar track */}
+          <View className="h-2.5 rounded-md overflow-hidden bg-track my-2">
+            <View className={`h-full rounded-md ${tone.bg}`} style={{ width:`${Math.min(100,pct)}%` }} />
+          </View>
+          <View className="flex-row items-center gap-1.5">
+            {[['HELD',full.th],['PRESENT',full.ta],['ABSENT',full.th-full.ta]].map(([l,v])=>(
+              <Text key={l} className="font-mono text-[10px] text-muted2">{l} <Text className="text-ink">{v}</Text></Text>
+            ))}
+          </View>
+          <View className="border-t border-border mt-2">
+            <Text className="font-mono text-[10px] text-muted mt-2">
+              {TODAY < config.semStart ? "Semester hasn't started yet" :
+               TODAY > config.semEnd   ? 'Semester over' :
+               `Actual so far: ${sfPct.toFixed(1)}% (${sf.ta}/${sf.th} through today)`}
+            </Text>
+          </View>
+        </View>
+
+        {/* ── Eligibility Gates ── */}
+        <Text className="font-mono text-[10px] tracking-[2px] uppercase mb-2 text-muted">Exam Eligibility · need ≥75%</Text>
+        <View className="flex-row items-center gap-2 mb-[18px]">
+          {GATES.map(({ label, cutoff, pct:p, known }) => {
+            const eligible   = known && p != null && p >= THRESHOLD;
+            const textClass  = !known ? 'text-muted2' : eligible ? 'text-cyan' : 'text-red';
+            const borderClass= !known ? 'border-border' : eligible ? 'border-cyan' : 'border-red';
+            const badgeBg    = !known ? 'bg-holidaybg' : eligible ? 'bg-cyandim' : 'bg-reddim';
+            return (
+              <View key={label} className={`bg-panel border rounded-xl p-2.5 flex-1 ${borderClass}`}>
+                <Text className="font-mono text-[10px] text-muted2 mb-0.5">{label}</Text>
+                <Text className={`font-mono-bold text-xl mb-[3px] ${textClass}`}>{known && p!=null ? p.toFixed(1)+'%' : '—'}</Text>
+                <View className={`px-[7px] py-0.5 rounded-full self-start ${badgeBg}`}>
+                  <Text className={`font-mono text-[10px] ${textClass}`}>
+                    {!known ? 'TBD' : eligible ? 'ELIGIBLE' : 'NOT ELIGIBLE'}
+                  </Text>
+                </View>
+                <Text className="font-mono text-[10px] text-muted2 mt-[3px]">{cutoff}</Text>
+              </View>
+            );
+          })}
+        </View>
+
+        {/* ── Course Ledger ── */}
+        <Text className="font-mono text-[10px] tracking-[2px] uppercase mb-2 text-muted">Course Ledger</Text>
+        <View className="bg-panel border border-border rounded-xl p-0 mb-[18px] overflow-hidden">
+          <View className="flex-row items-center bg-panel2 border-b border-border">
+            {['Course','Held','Present','%'].map((h,i)=>(
+              <Text key={h} className={`font-mono text-[10px] text-muted2 p-2 ${i===0?'flex-[2]':'flex-1'}`}>{h.toUpperCase()}</Text>
+            ))}
+          </View>
+          {COURSES.map((c,i) => {
+            const h=full.h[c], a=full.a[c], p=h?a/h*100:100;
+            const { bg, c:col } = pillClass(p);
+            return (
+              <View key={c} className={`flex-row items-center ${i<COURSES.length-1?'border-b border-border':''}`}>
+                <Text className="flex-[2] p-2 text-xs font-semibold text-ink font-sans">{CLABEL[c]}</Text>
+                <Text className="flex-1 p-2 font-mono text-[10px] text-muted">{h}</Text>
+                <Text className="flex-1 p-2 font-mono text-[10px] text-muted">{a}</Text>
+                <View className="flex-1 p-2">
+                  <View className={`px-[7px] py-0.5 rounded-full self-start ${bg}`}>
+                    <Text className={`font-mono-bold text-[10px] ${col}`}>{p.toFixed(1)}%</Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        {/* ── Calendar Header ── */}
+        <View className="flex-row items-center flex-wrap gap-1.5 mb-2">
+          <Text className="font-mono text-[10px] tracking-[2px] uppercase text-muted flex-1">Calendar</Text>
+          {status ? <Text className="font-mono text-[10px] text-muted self-center">{status}</Text> : null}
+          <Pressable onPress={resetAll} className="border px-2.5 py-1.5 rounded-[7px] border-red bg-reddim"><Text className="font-mono text-[10px] text-red">Reset</Text></Pressable>
+        </View>
+
+        {/* ── Calendar Grid ── */}
+        <View className="bg-panel border border-border rounded-xl p-2.5">
+          <View className="flex-row items-center mb-1.5">
+            {['MON','TUE','WED','THU','FRI'].map(d=>(
+              <Text key={d} className="font-mono text-[10px] flex-1 text-center text-muted2 tracking-[1px]">{d}</Text>
+            ))}
+          </View>
+          {weeks.map((week,wi)=>(
+            <View key={wi} className="flex-row items-center gap-1 mb-1">
+              {week.map(d => {
+                const lk       = lockedStatus(d.date);
+                const isToday  = d.date === TODAY;
+                const isFuture = d.date > TODAY;
+                const mix      = !lk ? dayMix(state, d.date, d.dow) : 'full';
+                const tc       = cellClass(d) || mixClass(mix);
+                return (
+                  <Pressable
+                    key={d.date}
+                    onPress={() => { if (lk) return; setSel(d.date); setDayModal(true); }}
+                    onLongPress={() => { if (lk) return; handleLongPress(d.date, d.dow); }}
+                    delayLongPress={600}
+                    className={`flex-1 rounded-[7px] p-[5px] items-center ${tc.bg} ${isFuture?'opacity-60':'opacity-100'} ${isToday?'border-2 border-ink':'border border-transparent'}`}
+                  >
+                    <Text className={`font-mono-bold text-[12px] ${tc.text}`}>{d.day}</Text>
+                    <Text className={`font-mono text-[8px] opacity-70 ${tc.text}`}>{MONTHS[d.month]}</Text>
+                    {mix === 'partial' && !lk && (
+                      <View className="flex-row gap-[1px] mt-0.5 flex-wrap justify-center">
+                        {slotsFor(d.date, d.dow).map(s=>(
+                          <View key={s.key} className={`w-[3px] h-[3px] rounded-[2px] ${present(state,d.date,s.key)?'bg-cyan':'bg-red'}`} />
+                        ))}
+                      </View>
+                    )}
+                  </Pressable>
+                );
+              })}
+            </View>
+          ))}
+          {/* Legend */}
+          <View className="flex-row flex-wrap gap-2.5 pt-2 border-t border-border mt-1">
+            {[['bg-cyan','All present'],['bg-amber','Partial'],['bg-red','All absent'],['bg-holidaydot','Holiday'],['bg-violet','Exam']].map(([c,l])=>(
+              <View key={l} className="flex-row items-center gap-1.5">
+                <View className={`w-2 h-2 rounded-[2px] mr-1 ${c}`} />
+                <Text className="font-mono text-[10px] text-muted2">{l}</Text>
+              </View>
+            ))}
+            <Text className="font-mono text-[10px] text-muted2">Long-press = toggle all</Text>
+          </View>
+        </View>
+
+        <Text className="font-sans text-[11px] leading-[17px] mt-3 text-muted2">
+          Tap the ⚙ icon to edit the semester length, holidays, exams, and weekly schedule.
+        </Text>
+      </ScrollView>
+
+      {/* ══ Day Detail Modal ══ */}
+      <Modal visible={dayModal} transparent animationType="slide" onRequestClose={()=>setDayModal(false)}>
+        <View className="flex-1 justify-end bg-black/75">
+          <View className="bg-panel2 rounded-t-[20px] p-5 max-h-[80%]">
+            {selDay && (
+              <>
+                <View className="flex-row flex-wrap gap-2 mb-3.5">
+                  <View className="flex-1">
+                    <Text className="font-sans text-[17px] font-bold text-ink">{DAYNAME[selDay.dow]}</Text>
+                    <Text className="font-mono text-[10px] text-muted">{MONTHS[selDay.month]} {selDay.day}</Text>
+                    {selLocked && <Text className="font-mono text-[10px] text-violet">{selLocked.lbl}</Text>}
+                  </View>
+                  <View className="flex-row items-center gap-1.5">
+                    {!selLocked && <>
+                      <Pressable onPress={()=>markAll(selDay.date,selDay.dow,true)} className="border px-2.5 py-1.5 rounded-[7px] border-cyan bg-cyandim">
+                        <Text className="font-mono text-[10px] text-cyan">All Present</Text>
+                      </Pressable>
+                      <Pressable onPress={()=>markAll(selDay.date,selDay.dow,false)} className="border px-2.5 py-1.5 rounded-[7px] border-red bg-reddim">
+                        <Text className="font-mono text-[10px] text-red">All Absent</Text>
+                      </Pressable>
+                    </>}
+                    <Pressable onPress={()=>setDayModal(false)} className="border px-2.5 py-1.5 rounded-[7px] border-border">
+                      <Text className="font-mono text-[10px] text-muted">✕</Text>
+                    </Pressable>
+                  </View>
+                </View>
+                {selLocked ? (
+                  <Text className="font-sans text-[13px] text-muted">
+                    {selLocked.type==='holiday'?`${selLocked.lbl} — no classes`:'Exam period — attendance frozen'}
+                  </Text>
+                ) : (
+                  <ScrollView showsVerticalScrollIndicator={false}>
+                    {selSlots.map(sl => {
+                      const pr = present(state, selDay.date, sl.key);
+                      return (
+                        <Pressable key={sl.key} onPress={()=>toggleSlot(selDay.date,sl.key)}
+                          className={`flex-row items-center justify-between p-3 rounded-lg mb-1.5 border ${pr?'bg-cyandim border-cyan':'bg-reddim border-red'}`}>
+                          <View className="flex-row items-center gap-1.5">
+                            <Text className="font-mono text-[10px] text-muted min-w-[46px]">{sl.time}</Text>
+                            <Text className="font-sans text-[13px] font-semibold text-ink">{sl.label}</Text>
+                          </View>
+                          <View className={`px-[7px] py-0.5 rounded-full self-start ${pr?'bg-presentbadge':'bg-absentbadge'}`}>
+                            <Text className={`font-mono-bold text-[10px] ${pr?'text-cyan':'text-red'}`}>
+                              {pr?'PRESENT':'ABSENT'}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* ══ Settings Modal ══ */}
+      <SettingsModal
+        visible={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        config={config}
+        setConfig={setConfig}
+      />
+    </View>
+    </SafeAreaProvider>
+  );
+}

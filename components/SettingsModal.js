@@ -1,0 +1,283 @@
+import React, { useState } from 'react';
+import { View, Text, ScrollView, Pressable, TextInput, Modal, Alert } from 'react-native';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { fmt, parseDate } from '../lib/dates';
+import { DAYNAME } from '../lib/constants';
+import { DEFAULT_CONFIG } from '../lib/defaultConfig';
+
+function openDatePicker(value, onChange) {
+  DateTimePickerAndroid.open({
+    value: parseDate(value),
+    mode: 'date',
+    display: 'calendar',
+    onChange: (event, selected) => {
+      if (event.type === 'set' && selected) onChange(fmt(selected));
+    },
+  });
+}
+
+function DateChip({ label, value, onChange }) {
+  return (
+    <Pressable onPress={() => openDatePicker(value, onChange)} className="border border-border rounded-lg px-2.5 py-2 bg-panel2 flex-1">
+      <Text className="font-mono text-[9px] text-muted2 uppercase tracking-[1px] mb-0.5">{label}</Text>
+      <Text className="font-mono text-[12px] text-ink">{value}</Text>
+    </Pressable>
+  );
+}
+
+function SectionLabel({ children }) {
+  return <Text className="font-mono text-[10px] tracking-[2px] uppercase mb-2 text-muted">{children}</Text>;
+}
+
+function RemoveBtn({ onPress }) {
+  return (
+    <Pressable onPress={onPress} className="border border-red bg-reddim rounded-[7px] p-1.5">
+      <Ionicons name="trash-outline" size={13} color="#E5484D" />
+    </Pressable>
+  );
+}
+
+export default function SettingsModal({ visible, onClose, config, setConfig }) {
+  const insets = useSafeAreaInsets();
+  const [newHolidayDate,    setNewHolidayDate]    = useState(fmt(new Date()));
+  const [newHolidayEnd,     setNewHolidayEnd]     = useState(fmt(new Date()));
+  const [newHolidayMulti,   setNewHolidayMulti]   = useState(false);
+  const [newHolidayLabel,   setNewHolidayLabel]   = useState('');
+  const [newExamName,  setNewExamName]  = useState('');
+  const [newExamStart, setNewExamStart] = useState(fmt(new Date()));
+  const [newExamEnd,   setNewExamEnd]   = useState(fmt(new Date()));
+  const [selDay, setSelDay] = useState(1);
+  const [newSlotTime,   setNewSlotTime]   = useState('');
+  const [newSlotCourse, setNewSlotCourse] = useState('');
+  const [newSlotLabel,  setNewSlotLabel]  = useState('');
+
+  function update(patch) { setConfig(c => ({ ...c, ...patch })); }
+
+  function addHoliday() {
+    if (!newHolidayLabel.trim()) return;
+    const entry = { date:newHolidayDate, label:newHolidayLabel.trim() };
+    if (newHolidayMulti && newHolidayEnd > newHolidayDate) entry.endDate = newHolidayEnd;
+    setConfig(c => ({
+      ...c,
+      holidays: [...c.holidays, entry].sort((a,b) => a.date.localeCompare(b.date)),
+    }));
+    setNewHolidayLabel('');
+    setNewHolidayMulti(false);
+  }
+  function removeHoliday(idx) {
+    setConfig(c => ({ ...c, holidays: c.holidays.filter((_,i) => i!==idx) }));
+  }
+  function updateHoliday(idx, patch) {
+    setConfig(c => ({ ...c, holidays: c.holidays.map((h,i) => i===idx ? { ...h, ...patch } : h) }));
+  }
+
+  function addExam() {
+    if (!newExamName.trim()) return;
+    setConfig(c => ({ ...c, exams: [...c.exams, { name:newExamName.trim(), startDate:newExamStart, endDate:newExamEnd }] }));
+    setNewExamName('');
+  }
+  function removeExam(idx) {
+    setConfig(c => ({ ...c, exams: c.exams.filter((_,i) => i!==idx) }));
+  }
+  function updateExam(idx, patch) {
+    setConfig(c => ({ ...c, exams: c.exams.map((e,i) => i===idx ? { ...e, ...patch } : e) }));
+  }
+
+  function addSlot() {
+    if (!newSlotTime.trim() || !newSlotCourse.trim()) return;
+    const course = newSlotCourse.trim().toUpperCase();
+    const slot = { key:`${selDay}-${Date.now()}`, time:newSlotTime.trim(), course, label:newSlotLabel.trim() || course };
+    setConfig(c => ({
+      ...c,
+      schedule: {
+        ...c.schedule,
+        [selDay]: [...(c.schedule[selDay]||[]), slot].sort((a,b) => a.time.localeCompare(b.time)),
+      },
+    }));
+    setNewSlotTime(''); setNewSlotCourse(''); setNewSlotLabel('');
+  }
+  function removeSlot(key) {
+    setConfig(c => ({ ...c, schedule: { ...c.schedule, [selDay]: c.schedule[selDay].filter(s => s.key!==key) } }));
+  }
+
+  function resetDefault() {
+    Alert.alert('Reset Settings', 'Restore the default GITAM Bengaluru semester? This discards your schedule, exam, and holiday edits.', [
+      { text:'Cancel', style:'cancel' },
+      { text:'Reset', style:'destructive', onPress: () => setConfig(DEFAULT_CONFIG) },
+    ]);
+  }
+
+  const daySlots = config.schedule[selDay] || [];
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View className="flex-1 justify-end bg-black/75">
+        <View className="bg-panel2 rounded-t-[20px] p-5 max-h-[92%]" style={{ paddingTop: Math.max(20, insets.top + 14) }}>
+          <View className="flex-row items-center justify-between mb-4">
+            <Text className="font-sans text-[17px] font-bold text-ink">Settings</Text>
+            <Pressable onPress={onClose} className="border px-2.5 py-1.5 rounded-[7px] border-border">
+              <Text className="font-mono text-[10px] text-muted">✕</Text>
+            </Pressable>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false}>
+
+            {/* ── Semester Length ── */}
+            <View className="mb-5">
+              <SectionLabel>Semester Length</SectionLabel>
+              <View className="flex-row gap-2">
+                <DateChip label="Start" value={config.semStart} onChange={d => update({ semStart:d })} />
+                <DateChip label="End"   value={config.semEnd}   onChange={d => update({ semEnd:d })} />
+              </View>
+            </View>
+
+            {/* ── Holidays ── */}
+            <View className="mb-5">
+              <SectionLabel>Holidays</SectionLabel>
+              {config.holidays.map((h, i) => (
+                <View key={h.date+i} className="flex-row items-center gap-1.5 mb-1.5">
+                  <DateChip label="Date" value={h.date} onChange={d => updateHoliday(i, { date:d })} />
+                  {h.endDate != null && (
+                    <DateChip label="Through" value={h.endDate} onChange={d => updateHoliday(i, { endDate:d })} />
+                  )}
+                  <TextInput
+                    value={h.label}
+                    onChangeText={t => updateHoliday(i, { label:t })}
+                    className="flex-1 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                  />
+                  <Pressable
+                    onPress={() => updateHoliday(i, h.endDate != null ? { endDate:undefined } : { endDate:h.date })}
+                    className="border border-border rounded-[7px] p-1.5"
+                  >
+                    <Ionicons name={h.endDate != null ? 'contract-outline' : 'expand-outline'} size={13} color="#7C8B9B" />
+                  </Pressable>
+                  <RemoveBtn onPress={() => removeHoliday(i)} />
+                </View>
+              ))}
+              <View className="flex-row items-center gap-1.5 mt-1">
+                <DateChip label="Date" value={newHolidayDate} onChange={setNewHolidayDate} />
+                {newHolidayMulti && (
+                  <DateChip label="Through" value={newHolidayEnd} onChange={setNewHolidayEnd} />
+                )}
+                <TextInput
+                  value={newHolidayLabel}
+                  onChangeText={setNewHolidayLabel}
+                  placeholder="Holiday name"
+                  placeholderTextColor="#566373"
+                  className="flex-1 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                />
+                <Pressable
+                  onPress={() => setNewHolidayMulti(m => !m)}
+                  className={`border rounded-[7px] p-1.5 ${newHolidayMulti ? 'border-cyan bg-cyandim' : 'border-border'}`}
+                >
+                  <Ionicons name={newHolidayMulti ? 'contract-outline' : 'expand-outline'} size={13} color={newHolidayMulti ? '#2DD4BF' : '#7C8B9B'} />
+                </Pressable>
+                <Pressable onPress={addHoliday} className="border border-cyan bg-cyandim rounded-[7px] p-1.5">
+                  <Ionicons name="add" size={16} color="#2DD4BF" />
+                </Pressable>
+              </View>
+              <Text className="font-mono text-[9px] text-muted2 mt-1">Tap the expand icon for a multi-day holiday (e.g. Winter Break).</Text>
+            </View>
+
+            {/* ── Exams ── */}
+            <View className="mb-5">
+              <SectionLabel>Exams</SectionLabel>
+              {config.exams.map((e, i) => (
+                <View key={e.name+i} className="bg-panel border border-border rounded-xl p-2.5 mb-1.5">
+                  <View className="flex-row items-center justify-between mb-1.5">
+                    <TextInput
+                      value={e.name}
+                      onChangeText={t => updateExam(i, { name:t })}
+                      className="flex-1 font-sans text-[13px] font-semibold text-ink"
+                    />
+                    <RemoveBtn onPress={() => removeExam(i)} />
+                  </View>
+                  <View className="flex-row gap-2">
+                    <DateChip label="Start" value={e.startDate} onChange={d => updateExam(i, { startDate:d })} />
+                    <DateChip label="End"   value={e.endDate}   onChange={d => updateExam(i, { endDate:d })} />
+                  </View>
+                </View>
+              ))}
+              <View className="bg-panel border border-border rounded-xl p-2.5">
+                <TextInput
+                  value={newExamName}
+                  onChangeText={setNewExamName}
+                  placeholder="Exam name (e.g. Sessional 2)"
+                  placeholderTextColor="#566373"
+                  className="font-sans text-[13px] text-ink mb-1.5"
+                />
+                <View className="flex-row items-center gap-2">
+                  <DateChip label="Start" value={newExamStart} onChange={setNewExamStart} />
+                  <DateChip label="End"   value={newExamEnd}   onChange={setNewExamEnd} />
+                  <Pressable onPress={addExam} className="border border-cyan bg-cyandim rounded-[7px] p-1.5">
+                    <Ionicons name="add" size={16} color="#2DD4BF" />
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+
+            {/* ── Weekly Schedule ── */}
+            <View className="mb-3">
+              <SectionLabel>Weekly Schedule</SectionLabel>
+              <View className="flex-row gap-1.5 mb-2.5">
+                {[1,2,3,4,5].map(dow => (
+                  <Pressable
+                    key={dow}
+                    onPress={() => setSelDay(dow)}
+                    className={`flex-1 items-center py-1.5 rounded-[7px] border ${selDay===dow ? 'border-cyan bg-cyandim' : 'border-border'}`}
+                  >
+                    <Text className={`font-mono text-[10px] ${selDay===dow ? 'text-cyan' : 'text-muted'}`}>{DAYNAME[dow].slice(0,3).toUpperCase()}</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {daySlots.map(s => (
+                <View key={s.key} className="flex-row items-center gap-1.5 mb-1.5">
+                  <Text className="font-mono text-[10px] text-muted min-w-[42px]">{s.time}</Text>
+                  <Text className="flex-1 font-sans text-[12px] text-ink">{s.label}</Text>
+                  <RemoveBtn onPress={() => removeSlot(s.key)} />
+                </View>
+              ))}
+              {!daySlots.length && (
+                <Text className="font-sans text-[12px] text-muted2 mb-1.5">No classes scheduled.</Text>
+              )}
+
+              <View className="flex-row items-center gap-1.5 mt-1">
+                <TextInput
+                  value={newSlotTime}
+                  onChangeText={setNewSlotTime}
+                  placeholder="HH:MM"
+                  placeholderTextColor="#566373"
+                  className="font-mono text-[11px] border border-border rounded-lg px-2 py-2 bg-panel text-ink w-[64px]"
+                />
+                <TextInput
+                  value={newSlotCourse}
+                  onChangeText={setNewSlotCourse}
+                  placeholder="Course code"
+                  placeholderTextColor="#566373"
+                  className="flex-1 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                />
+                <TextInput
+                  value={newSlotLabel}
+                  onChangeText={setNewSlotLabel}
+                  placeholder="Label (optional)"
+                  placeholderTextColor="#566373"
+                  className="flex-1 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                />
+                <Pressable onPress={addSlot} className="border border-cyan bg-cyandim rounded-[7px] p-1.5">
+                  <Ionicons name="add" size={16} color="#2DD4BF" />
+                </Pressable>
+              </View>
+            </View>
+
+            <Pressable onPress={resetDefault} className="border border-red bg-reddim rounded-[7px] px-2.5 py-2 items-center mt-2 mb-6">
+              <Text className="font-mono text-[10px] text-red">Reset to Default</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
