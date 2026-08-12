@@ -183,7 +183,7 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
             <View className="mb-5">
               <SectionLabel>Holidays</SectionLabel>
               {config.holidays.map((h, i) => (
-                <View key={h.date+i} className="flex-row items-center gap-1.5 mb-1.5">
+                <View key={h.date+i} className="flex-row flex-wrap items-center gap-1.5 mb-1.5">
                   <DateChip label="Date" value={h.date} onChange={d => updateHoliday(i, { date:d })} />
                   {h.endDate != null && (
                     <DateChip label="Through" value={h.endDate} onChange={d => updateHoliday(i, { endDate:d })} />
@@ -191,7 +191,7 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   <TextInput
                     value={h.label}
                     onChangeText={t => updateHoliday(i, { label:t })}
-                    className="flex-1 min-w-0 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                    className="flex-1 min-w-[110px] font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
                   />
                   <Pressable
                     onPress={() => updateHoliday(i, h.endDate != null ? { endDate:undefined } : { endDate:h.date })}
@@ -202,7 +202,7 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   <RemoveBtn onPress={() => removeHoliday(i)} />
                 </View>
               ))}
-              <View className="flex-row items-center gap-1.5 mt-1">
+              <View className="flex-row flex-wrap items-center gap-1.5 mt-1">
                 <DateChip label="Date" value={newHolidayDate} onChange={setNewHolidayDate} />
                 {newHolidayMulti && (
                   <DateChip label="Through" value={newHolidayEnd} onChange={setNewHolidayEnd} />
@@ -212,7 +212,7 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   onChangeText={setNewHolidayLabel}
                   placeholder="Holiday name"
                   placeholderTextColor="#566373"
-                  className="flex-1 min-w-0 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                  className="flex-1 min-w-[110px] font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
                 />
                 <Pressable
                   onPress={() => setNewHolidayMulti(m => !m)}
@@ -232,15 +232,15 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
               <SectionLabel>Exams</SectionLabel>
               {config.exams.map((e, i) => (
                 <View key={e.name+i} className="bg-panel border border-border rounded-xl p-2.5 mb-1.5">
-                  <View className="flex-row items-center justify-between mb-1.5">
+                  <View className="flex-row flex-wrap items-center justify-between mb-1.5 gap-1.5">
                     <TextInput
                       value={e.name}
                       onChangeText={t => updateExam(i, { name:t })}
-                      className="flex-1 font-sans text-[13px] font-semibold text-ink"
+                      className="flex-1 min-w-[110px] font-sans text-[13px] font-semibold text-ink"
                     />
                     <RemoveBtn onPress={() => removeExam(i)} />
                   </View>
-                  <View className="flex-row gap-2">
+                  <View className="flex-row flex-wrap gap-2">
                     <DateChip label="Start" value={e.startDate} onChange={d => updateExam(i, d > e.endDate ? { startDate:d, endDate:d } : { startDate:d })} />
                     <DateChip label="End"   value={e.endDate}   onChange={d => updateExam(i, d < e.startDate ? { endDate:d, startDate:d } : { endDate:d })} />
                   </View>
@@ -254,10 +254,10 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   placeholderTextColor="#566373"
                   className="font-sans text-[13px] text-ink mb-1.5"
                 />
-                <View className="flex-row items-center gap-2">
+                <View className="flex-row flex-wrap items-center gap-2">
                   <DateChip label="Start" value={newExamStart} onChange={d => { setNewExamStart(d); if (d > newExamEnd) setNewExamEnd(d); }} />
                   <DateChip label="End"   value={newExamEnd}   onChange={d => { setNewExamEnd(d); if (d < newExamStart) setNewExamStart(d); }} />
-                  <Pressable onPress={addExam} className="border border-cyan bg-cyandim rounded-[7px] p-1.5">
+                  <Pressable onPress={addExam} className="border border-cyan bg-cyandim rounded-[7px] p-1.5 shrink-0">
                     <Ionicons name="add" size={16} color="#2DD4BF" />
                   </Pressable>
                 </View>
@@ -290,7 +290,7 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                 <Text className="font-sans text-[12px] text-muted2 mb-1.5">No classes scheduled.</Text>
               )}
 
-              <View className="flex-row items-center gap-1.5 mt-1">
+              <View className="flex-row flex-wrap items-center gap-1.5 mt-1">
                 <TextInput
                   value={newSlotTime}
                   onChangeText={setNewSlotTime}
@@ -303,14 +303,14 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   onChangeText={setNewSlotCourse}
                   placeholder="Course code"
                   placeholderTextColor="#566373"
-                  className="flex-1 min-w-0 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                  className="flex-1 min-w-[110px] font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
                 />
                 <TextInput
                   value={newSlotLabel}
                   onChangeText={setNewSlotLabel}
                   placeholder="Label (optional)"
                   placeholderTextColor="#566373"
-                  className="flex-1 min-w-0 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                  className="flex-1 min-w-[110px] font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
                 />
                 <Pressable onPress={addSlot} className="border border-cyan bg-cyandim rounded-[7px] p-1.5 shrink-0">
                   <Ionicons name="add" size={16} color="#2DD4BF" />
