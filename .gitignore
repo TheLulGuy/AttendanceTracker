@@ -7,3 +7,6 @@ CLAUDE.md
 dist/
 play-store-service-account.json
 .env
+
+.vercel
+.env*

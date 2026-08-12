@@ -174,8 +174,8 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
             <View className="mb-5">
               <SectionLabel>Semester Length</SectionLabel>
               <View className="flex-row gap-2">
-                <DateChip label="Start" value={config.semStart} onChange={d => update({ semStart:d })} />
-                <DateChip label="End"   value={config.semEnd}   onChange={d => update({ semEnd:d })} />
+                <DateChip label="Start" value={config.semStart} onChange={d => update(d > config.semEnd ? { semStart:d, semEnd:d } : { semStart:d })} />
+                <DateChip label="End"   value={config.semEnd}   onChange={d => update(d < config.semStart ? { semEnd:d, semStart:d } : { semEnd:d })} />
               </View>
             </View>
 
@@ -191,11 +191,11 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   <TextInput
                     value={h.label}
                     onChangeText={t => updateHoliday(i, { label:t })}
-                    className="flex-1 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                    className="flex-1 min-w-0 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
                   />
                   <Pressable
                     onPress={() => updateHoliday(i, h.endDate != null ? { endDate:undefined } : { endDate:h.date })}
-                    className="border border-border rounded-[7px] p-1.5"
+                    className="border border-border rounded-[7px] p-1.5 shrink-0"
                   >
                     <Ionicons name={h.endDate != null ? 'contract-outline' : 'expand-outline'} size={13} color="#7C8B9B" />
                   </Pressable>
@@ -212,15 +212,15 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   onChangeText={setNewHolidayLabel}
                   placeholder="Holiday name"
                   placeholderTextColor="#566373"
-                  className="flex-1 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                  className="flex-1 min-w-0 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
                 />
                 <Pressable
                   onPress={() => setNewHolidayMulti(m => !m)}
-                  className={`border rounded-[7px] p-1.5 ${newHolidayMulti ? 'border-cyan bg-cyandim' : 'border-border'}`}
+                  className={`border rounded-[7px] p-1.5 shrink-0 ${newHolidayMulti ? 'border-cyan bg-cyandim' : 'border-border'}`}
                 >
                   <Ionicons name={newHolidayMulti ? 'contract-outline' : 'expand-outline'} size={13} color={newHolidayMulti ? '#2DD4BF' : '#7C8B9B'} />
                 </Pressable>
-                <Pressable onPress={addHoliday} className="border border-cyan bg-cyandim rounded-[7px] p-1.5">
+                <Pressable onPress={addHoliday} className="border border-cyan bg-cyandim rounded-[7px] p-1.5 shrink-0">
                   <Ionicons name="add" size={16} color="#2DD4BF" />
                 </Pressable>
               </View>
@@ -241,8 +241,8 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                     <RemoveBtn onPress={() => removeExam(i)} />
                   </View>
                   <View className="flex-row gap-2">
-                    <DateChip label="Start" value={e.startDate} onChange={d => updateExam(i, { startDate:d })} />
-                    <DateChip label="End"   value={e.endDate}   onChange={d => updateExam(i, { endDate:d })} />
+                    <DateChip label="Start" value={e.startDate} onChange={d => updateExam(i, d > e.endDate ? { startDate:d, endDate:d } : { startDate:d })} />
+                    <DateChip label="End"   value={e.endDate}   onChange={d => updateExam(i, d < e.startDate ? { endDate:d, startDate:d } : { endDate:d })} />
                   </View>
                 </View>
               ))}
@@ -255,8 +255,8 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   className="font-sans text-[13px] text-ink mb-1.5"
                 />
                 <View className="flex-row items-center gap-2">
-                  <DateChip label="Start" value={newExamStart} onChange={setNewExamStart} />
-                  <DateChip label="End"   value={newExamEnd}   onChange={setNewExamEnd} />
+                  <DateChip label="Start" value={newExamStart} onChange={d => { setNewExamStart(d); if (d > newExamEnd) setNewExamEnd(d); }} />
+                  <DateChip label="End"   value={newExamEnd}   onChange={d => { setNewExamEnd(d); if (d < newExamStart) setNewExamStart(d); }} />
                   <Pressable onPress={addExam} className="border border-cyan bg-cyandim rounded-[7px] p-1.5">
                     <Ionicons name="add" size={16} color="#2DD4BF" />
                   </Pressable>
@@ -303,16 +303,16 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   onChangeText={setNewSlotCourse}
                   placeholder="Course code"
                   placeholderTextColor="#566373"
-                  className="flex-1 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                  className="flex-1 min-w-0 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
                 />
                 <TextInput
                   value={newSlotLabel}
                   onChangeText={setNewSlotLabel}
                   placeholder="Label (optional)"
                   placeholderTextColor="#566373"
-                  className="flex-1 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
+                  className="flex-1 min-w-0 font-sans text-[12px] border border-border rounded-lg px-2.5 py-2 bg-panel text-ink"
                 />
-                <Pressable onPress={addSlot} className="border border-cyan bg-cyandim rounded-[7px] p-1.5">
+                <Pressable onPress={addSlot} className="border border-cyan bg-cyandim rounded-[7px] p-1.5 shrink-0">
                   <Ionicons name="add" size={16} color="#2DD4BF" />
                 </Pressable>
               </View>

@@ -500,6 +500,7 @@ export default function App() {
                   </Pressable>
                 );
               })}
+              {Array.from({ length: 5 - week.length }, (_, i) => <View key={`pad-${i}`} className="flex-1" />)}
             </View>
           ))}
           {/* Legend */}

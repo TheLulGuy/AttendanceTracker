@@ -73,6 +73,7 @@ export default function WebDatePicker({ visible, value, onChange, onClose }) {
                   </Pressable>
                 );
               })}
+              {Array.from({ length: 7 - week.length }, (_, i) => <View key={`pad-${i}`} className="flex-1 p-[5px]" />)}
             </View>
           ))}
 
