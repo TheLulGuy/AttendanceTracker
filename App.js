@@ -19,6 +19,7 @@ import { auth } from './lib/firebase';
 import { pushState, pushConfig, pullState, pullConfig } from './lib/sync';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
+import { version as APP_VERSION } from './package.json';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -378,7 +379,7 @@ export default function App() {
             <Text className="font-sans text-2xl font-extrabold text-ink">Attendance Edge</Text>
           </View>
           <View className="items-end">
-            <Text className="font-mono text-[9px] text-muted2 mb-1">v1.2.1</Text>
+            <Text className="font-mono text-[9px] text-muted2 mb-1">v{APP_VERSION}</Text>
             <Pressable onPress={() => setSettingsOpen(true)} className="border px-2.5 py-2 rounded-[7px] border-border">
               <Ionicons name="settings-outline" size={16} color="#7C8B9B" />
             </Pressable>
@@ -478,7 +479,11 @@ export default function App() {
           {weeks.map((week,wi)=>(
             <View key={wi} className="flex-row items-center gap-1 mb-1">
               {week.map((d, di) => {
-                if (!d) return <View key={`blank-${di}`} className="flex-1 rounded-[7px] p-[5px] border border-transparent" />;
+                if (!d) return (
+                  <View key={`blank-${di}`} className="flex-1 rounded-[7px] p-[5px] border border-transparent bg-panel2 items-center justify-center">
+                    <Text className="font-mono text-[12px] text-muted2">✕</Text>
+                  </View>
+                );
                 const lk       = lockedStatus(d.date);
                 const isToday  = d.date === TODAY;
                 const isFuture = d.date > TODAY;
