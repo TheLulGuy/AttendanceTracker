@@ -110,6 +110,8 @@ export default function App() {
   const configRef   = useRef(config);
   const lastStateAt  = useRef(0);
   const lastConfigAt = useRef(0);
+  const suppressStatePush  = useRef(false);
+  const suppressConfigPush = useRef(false);
 
   useEffect(() => { stateRef.current = state; }, [state]);
   useEffect(() => { configRef.current = config; }, [config]);
@@ -150,11 +152,14 @@ export default function App() {
   // ── AsyncStorage: auto-save attendance on every state change ──
   useEffect(() => {
     if (!didInit.current) return;   // never overwrite on the initial empty render
-    setStatus('saving…');
+    const isRemote = suppressStatePush.current;
+    suppressStatePush.current = false;
+    if (!isRemote) setStatus('saving…');
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       AsyncStorage.setItem(STORE_KEY, JSON.stringify(state))
         .then(() => {
+          if (isRemote) return;
           flash('✓ saved');
           if (user && !tabLocked) {
             pushState(user.uid, state)
@@ -188,10 +193,13 @@ export default function App() {
   // ── AsyncStorage: auto-save semester config on every change ──
   useEffect(() => {
     if (!didInitCfg.current) return;
+    const isRemote = suppressConfigPush.current;
+    suppressConfigPush.current = false;
     clearTimeout(cfgSaveTimer.current);
     cfgSaveTimer.current = setTimeout(() => {
       AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(config))
         .then(() => {
+          if (isRemote) return;
           if (user && !tabLocked) {
             pushConfig(user.uid, config)
               .then(updatedAt => {
@@ -234,6 +242,7 @@ export default function App() {
         if (cloud) {
           if (cloud.updatedAt > lastStateAt.current) {
             lastStateAt.current = cloud.updatedAt;
+            suppressStatePush.current = true;
             setState(cloud.data || {});
             AsyncStorage.setItem(STATE_SYNCED_KEY, String(cloud.updatedAt)).catch(() => {});
           }
@@ -254,6 +263,7 @@ export default function App() {
             const migrated = migrateConfig(cloud.data);
             if (migrated) {
               lastConfigAt.current = cloud.updatedAt;
+              suppressConfigPush.current = true;
               setConfig(migrated);
               AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(cloud.updatedAt)).catch(() => {});
             }
@@ -261,7 +271,7 @@ export default function App() {
         } else if (lastConfigAt.current === 0) {
           // First sync ever for this account: seed the real GITAM schedule for the owner, blank for everyone else.
           const seed = user.email === OWNER_EMAIL ? DEFAULT_CONFIG : configRef.current;
-          if (seed !== configRef.current) setConfig(seed);
+          if (seed !== configRef.current) { suppressConfigPush.current = true; setConfig(seed); }
           pushConfig(user.uid, seed)
             .then(updatedAt => {
               lastConfigAt.current = updatedAt;
