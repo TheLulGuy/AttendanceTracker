@@ -2,7 +2,7 @@ import './global.css';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, Pressable, Modal,
-  useWindowDimensions, Alert,
+  useWindowDimensions, Alert, Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
@@ -28,6 +28,7 @@ const STORE_KEY  = 'gitam-att-v5';
 const CONFIG_KEY = 'gitam-att-config-v1';
 const STATE_SYNCED_KEY  = 'gitam-att-v5-synced-at';
 const CONFIG_SYNCED_KEY = 'gitam-att-config-v1-synced-at';
+const ACTIVE_TAB_KEY    = 'gitam-active-tab';
 
 // One-off cancellations: GCGC1021 cancelled on Jul 3
 const OVERRIDES = { '2026-07-03': s => s.filter(x => x.course !== 'GCGC1021') };
@@ -96,7 +97,10 @@ export default function App() {
   const [authResolved, setAuthResolved] = useState(false);
   const [stateLoaded, setStateLoaded] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
+  const [tabLocked, setTabLocked] = useState(false);
+  const [closeAttempted, setCloseAttempted] = useState(false);
   const autoOpenedWizard = useRef(false);
+  const tabId = useRef(Math.random().toString(36).slice(2) + Date.now()).current;
 
   const saveTimer   = useRef(null);
   const didInit     = useRef(false);
@@ -146,7 +150,7 @@ export default function App() {
       AsyncStorage.setItem(STORE_KEY, JSON.stringify(state))
         .then(() => {
           flash('✓ saved');
-          if (user) {
+          if (user && !tabLocked) {
             pushState(user.uid, state)
               .then(() => AsyncStorage.setItem(STATE_SYNCED_KEY, String(Date.now())))
               .catch(() => {});
@@ -154,7 +158,7 @@ export default function App() {
         })
         .catch(() => setStatus(''));
     }, 400);
-  }, [state, user]);
+  }, [state, user, tabLocked]);
 
   // ── AsyncStorage: load semester config once on mount ──
   useEffect(() => {
@@ -179,7 +183,7 @@ export default function App() {
     cfgSaveTimer.current = setTimeout(() => {
       AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(config))
         .then(() => {
-          if (user) {
+          if (user && !tabLocked) {
             pushConfig(user.uid, config)
               .then(() => AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(Date.now())))
               .catch(() => {});
@@ -187,7 +191,7 @@ export default function App() {
         })
         .catch(() => {});
     }, 400);
-  }, [config, user]);
+  }, [config, user, tabLocked]);
 
   // ── Firebase: track signed-in user ──
   useEffect(() => onAuthStateChanged(auth, u => { setUser(u); setAuthResolved(true); }), []);
@@ -230,6 +234,37 @@ export default function App() {
       } catch (_) {}
     })();
   }, [user, stateLoaded, configLoaded]);
+
+  // ── Web only: detect the same account open in another tab, and let only one tab stay active ──
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !user) return;
+    const claim = () => localStorage.setItem(ACTIVE_TAB_KEY, JSON.stringify({ uid: user.uid, tabId, ts: Date.now() }));
+    claim();
+    function onStorage(e) {
+      if (e.key !== ACTIVE_TAB_KEY || !e.newValue) return;
+      try {
+        const { uid, tabId: otherTabId } = JSON.parse(e.newValue);
+        if (uid === user.uid && otherTabId !== tabId) setTabLocked(true);
+      } catch (_) {}
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [user]);
+
+  async function reclaimTab() {
+    try {
+      const [cs, cc] = await Promise.all([pullState(user.uid), pullConfig(user.uid)]);
+      if (cs) setState(cs.data || {});
+      if (cc) { const m = migrateConfig(cc.data); if (m) setConfig(m); }
+    } catch (_) {}
+    localStorage.setItem(ACTIVE_TAB_KEY, JSON.stringify({ uid: user.uid, tabId, ts: Date.now() }));
+    setTabLocked(false);
+  }
+
+  function closeThisTab() {
+    window.close();
+    setTimeout(() => setCloseAttempted(true), 300);
+  }
 
   const hasConfigured = Object.values(config.schedule).some(day => day.length > 0);
 
@@ -366,6 +401,28 @@ export default function App() {
           <Text className="font-sans text-2xl font-extrabold text-ink mb-5">Attendance Edge</Text>
           <View className="w-full max-w-[360px]">
             <LoginScreen />
+          </View>
+        </View>
+      </SafeAreaProvider>
+    );
+  }
+
+  if (tabLocked) {
+    return (
+      <SafeAreaProvider>
+        <View className="flex-1 bg-bg justify-center items-center p-6" onLayout={onLayoutRootView}>
+          <View className="w-full max-w-[360px] bg-panel border border-border rounded-xl p-4">
+            <Text className="font-sans text-[15px] font-bold text-ink mb-2">Multiple sign-ins detected</Text>
+            <Text className="font-sans text-[13px] text-muted mb-4">This account is open in another tab. To avoid conflicting edits, only one tab can be active at a time.</Text>
+            <Pressable onPress={reclaimTab} className="border border-cyan bg-cyandim rounded-[7px] py-2 items-center mb-1.5">
+              <Text className="font-mono text-[10px] text-cyan">Use This Tab</Text>
+            </Pressable>
+            <Pressable onPress={closeThisTab} className="border border-red bg-reddim rounded-[7px] py-2 items-center">
+              <Text className="font-mono text-[10px] text-red">Close This Tab</Text>
+            </Pressable>
+            {closeAttempted && (
+              <Text className="font-mono text-[9px] text-muted2 mt-2 text-center">Your browser blocked auto-close — you can close this tab manually.</Text>
+            )}
           </View>
         </View>
       </SafeAreaProvider>
