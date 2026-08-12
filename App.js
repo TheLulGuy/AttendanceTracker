@@ -377,9 +377,12 @@ export default function App() {
             <Text className="font-mono text-[10px] tracking-[2px] uppercase mb-1 text-cyan">{dispDate(config.semStart)} – {dispDate(config.semEnd)}, {parseDate(config.semEnd).getFullYear()}</Text>
             <Text className="font-sans text-2xl font-extrabold text-ink">Attendance Edge</Text>
           </View>
-          <Pressable onPress={() => setSettingsOpen(true)} className="border px-2.5 py-2 rounded-[7px] border-border">
-            <Ionicons name="settings-outline" size={16} color="#7C8B9B" />
-          </Pressable>
+          <View className="items-end">
+            <Text className="font-mono text-[9px] text-muted2 mb-1">v1.2.1</Text>
+            <Pressable onPress={() => setSettingsOpen(true)} className="border px-2.5 py-2 rounded-[7px] border-border">
+              <Ionicons name="settings-outline" size={16} color="#7C8B9B" />
+            </Pressable>
+          </View>
         </View>
         <Text className="font-sans text-xs leading-[18px] mb-[18px] text-muted">Tap a date to log classes · long-press to toggle all</Text>
 
@@ -467,7 +470,7 @@ export default function App() {
 
         {/* ── Calendar Grid ── */}
         <View className="bg-panel border border-border rounded-xl p-2.5">
-          <View className="flex-row items-center mb-1.5">
+          <View className="flex-row items-center gap-1 mb-1.5">
             {['MON','TUE','WED','THU','FRI'].map(d=>(
               <Text key={d} className="font-mono text-[10px] flex-1 text-center text-muted2 tracking-[1px]">{d}</Text>
             ))}
@@ -475,7 +478,7 @@ export default function App() {
           {weeks.map((week,wi)=>(
             <View key={wi} className="flex-row items-center gap-1 mb-1">
               {week.map((d, di) => {
-                if (!d) return <View key={`blank-${di}`} className="flex-1" />;
+                if (!d) return <View key={`blank-${di}`} className="flex-1 rounded-[7px] p-[5px] border border-transparent" />;
                 const lk       = lockedStatus(d.date);
                 const isToday  = d.date === TODAY;
                 const isFuture = d.date > TODAY;

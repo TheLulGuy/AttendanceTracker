@@ -59,7 +59,7 @@ export default function WebDatePicker({ visible, value, onChange, onClose }) {
           {Array.from({ length: Math.ceil(cells.length / 7) }, (_, wi) => cells.slice(wi * 7, wi * 7 + 7)).map((week, wi) => (
             <View key={wi} className="flex-row items-center mb-1">
               {week.map((day, di) => {
-                if (day == null) return <View key={di} className="flex-1 p-[5px]" />;
+                if (day == null) return <View key={di} className="flex-1 rounded-[7px] p-[5px] border border-transparent" />;
                 const dateStr = fmt(new Date(year, month, day, 12));
                 const isSel = dateStr === value;
                 const isToday = dateStr === todayStr;
@@ -73,7 +73,7 @@ export default function WebDatePicker({ visible, value, onChange, onClose }) {
                   </Pressable>
                 );
               })}
-              {Array.from({ length: 7 - week.length }, (_, i) => <View key={`pad-${i}`} className="flex-1 p-[5px]" />)}
+              {Array.from({ length: 7 - week.length }, (_, i) => <View key={`pad-${i}`} className="flex-1 rounded-[7px] p-[5px] border border-transparent" />)}
             </View>
           ))}
 
