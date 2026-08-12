@@ -16,7 +16,7 @@ import { MONTHS, DAYNAME, OWNER_EMAIL } from './lib/constants';
 import { DEFAULT_CONFIG, EMPTY_CONFIG } from './lib/defaultConfig';
 import { migrateConfig } from './lib/configMigration';
 import { auth } from './lib/firebase';
-import { pushState, pushConfig, pullState, pullConfig } from './lib/sync';
+import { pushState, pushConfig, subscribeState, subscribeConfig } from './lib/sync';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import { version as APP_VERSION } from './package.json';
@@ -106,7 +106,13 @@ export default function App() {
   const didInit     = useRef(false);
   const cfgSaveTimer = useRef(null);
   const didInitCfg  = useRef(false);
-  const syncedUid   = useRef(null);
+  const stateRef    = useRef(state);
+  const configRef   = useRef(config);
+  const lastStateAt  = useRef(0);
+  const lastConfigAt = useRef(0);
+
+  useEffect(() => { stateRef.current = state; }, [state]);
+  useEffect(() => { configRef.current = config; }, [config]);
 
   const [fontsLoaded] = useFonts({
     SpaceGrotesk: require('./assets/fonts/SpaceGrotesk-Variable.ttf'),
@@ -152,7 +158,10 @@ export default function App() {
           flash('✓ saved');
           if (user && !tabLocked) {
             pushState(user.uid, state)
-              .then(() => AsyncStorage.setItem(STATE_SYNCED_KEY, String(Date.now())))
+              .then(updatedAt => {
+                lastStateAt.current = updatedAt;
+                return AsyncStorage.setItem(STATE_SYNCED_KEY, String(updatedAt));
+              })
               .catch(() => {});
           }
         })
@@ -185,7 +194,10 @@ export default function App() {
         .then(() => {
           if (user && !tabLocked) {
             pushConfig(user.uid, config)
-              .then(() => AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(Date.now())))
+              .then(updatedAt => {
+                lastConfigAt.current = updatedAt;
+                return AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(updatedAt));
+              })
               .catch(() => {});
           }
         })
@@ -196,43 +208,71 @@ export default function App() {
   // ── Firebase: track signed-in user ──
   useEffect(() => onAuthStateChanged(auth, u => { setUser(u); setAuthResolved(true); }), []);
 
-  // ── Firebase: pull-or-push last-write-wins merge once per login ──
-  // Waits for both local AsyncStorage loads to finish first - otherwise this could read the
-  // still-empty initial state/config (a real race: Firebase auth can restore faster than the
-  // local read) and push that blank data up, overwriting real data already in Firestore.
+  // ── Firebase: live sync via Firestore listeners, not just once at login ──
+  // A one-time pull isn't enough: a device left open across an edit made on another device
+  // would never learn the cloud moved on, and its next save would blindly overwrite the newer
+  // data with its now-stale copy. Live listeners keep every open device continuously current.
+  // Also waits for both local AsyncStorage loads first - otherwise this could read the still-
+  // empty initial state/config (auth can restore faster than the local read) and treat that as
+  // authoritative.
   useEffect(() => {
-    if (!user || !stateLoaded || !configLoaded || syncedUid.current === user.uid) return;
-    syncedUid.current = user.uid;
+    if (!user || !stateLoaded || !configLoaded) return;
+    let cancelled = false;
+    let unsubState = () => {};
+    let unsubConfig = () => {};
+
     (async () => {
-      try {
-        const [localStateAt, localConfigAt, cloudState, cloudConfig] = await Promise.all([
-          AsyncStorage.getItem(STATE_SYNCED_KEY),
-          AsyncStorage.getItem(CONFIG_SYNCED_KEY),
-          pullState(user.uid),
-          pullConfig(user.uid),
-        ]);
+      const [localStateAt, localConfigAt] = await Promise.all([
+        AsyncStorage.getItem(STATE_SYNCED_KEY),
+        AsyncStorage.getItem(CONFIG_SYNCED_KEY),
+      ]);
+      if (cancelled) return;
+      lastStateAt.current = Number(localStateAt || 0);
+      lastConfigAt.current = Number(localConfigAt || 0);
 
-        if (cloudState && cloudState.updatedAt > Number(localStateAt || 0)) {
-          setState(cloudState.data || {});
-          await AsyncStorage.setItem(STATE_SYNCED_KEY, String(cloudState.updatedAt));
-        } else {
-          await pushState(user.uid, state);
-          await AsyncStorage.setItem(STATE_SYNCED_KEY, String(Date.now()));
+      unsubState = subscribeState(user.uid, cloud => {
+        if (cloud) {
+          if (cloud.updatedAt > lastStateAt.current) {
+            lastStateAt.current = cloud.updatedAt;
+            setState(cloud.data || {});
+            AsyncStorage.setItem(STATE_SYNCED_KEY, String(cloud.updatedAt)).catch(() => {});
+          }
+        } else if (lastStateAt.current === 0) {
+          // No cloud doc at all yet - seed it from whatever's currently local.
+          pushState(user.uid, stateRef.current)
+            .then(updatedAt => {
+              lastStateAt.current = updatedAt;
+              return AsyncStorage.setItem(STATE_SYNCED_KEY, String(updatedAt));
+            })
+            .catch(() => {});
         }
+      });
 
-        if (cloudConfig && cloudConfig.updatedAt > Number(localConfigAt || 0)) {
-          const migrated = migrateConfig(cloudConfig.data);
-          if (migrated) setConfig(migrated);
-          await AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(cloudConfig.updatedAt));
-        } else {
-          // First sync ever for the owner's account: seed the real GITAM schedule instead of a blank one.
-          const seed = (!cloudConfig && !localConfigAt && user.email === OWNER_EMAIL) ? DEFAULT_CONFIG : config;
-          if (seed !== config) setConfig(seed);
-          await pushConfig(user.uid, seed);
-          await AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(Date.now()));
+      unsubConfig = subscribeConfig(user.uid, cloud => {
+        if (cloud) {
+          if (cloud.updatedAt > lastConfigAt.current) {
+            const migrated = migrateConfig(cloud.data);
+            if (migrated) {
+              lastConfigAt.current = cloud.updatedAt;
+              setConfig(migrated);
+              AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(cloud.updatedAt)).catch(() => {});
+            }
+          }
+        } else if (lastConfigAt.current === 0) {
+          // First sync ever for this account: seed the real GITAM schedule for the owner, blank for everyone else.
+          const seed = user.email === OWNER_EMAIL ? DEFAULT_CONFIG : configRef.current;
+          if (seed !== configRef.current) setConfig(seed);
+          pushConfig(user.uid, seed)
+            .then(updatedAt => {
+              lastConfigAt.current = updatedAt;
+              return AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(updatedAt));
+            })
+            .catch(() => {});
         }
-      } catch (_) {}
+      });
     })();
+
+    return () => { cancelled = true; unsubState(); unsubConfig(); };
   }, [user, stateLoaded, configLoaded]);
 
   // ── Web only: detect the same account open in another tab, and let only one tab stay active ──
@@ -251,12 +291,9 @@ export default function App() {
     return () => window.removeEventListener('storage', onStorage);
   }, [user]);
 
-  async function reclaimTab() {
-    try {
-      const [cs, cc] = await Promise.all([pullState(user.uid), pullConfig(user.uid)]);
-      if (cs) setState(cs.data || {});
-      if (cc) { const m = migrateConfig(cc.data); if (m) setConfig(m); }
-    } catch (_) {}
+  function reclaimTab() {
+    // The live Firestore listeners stay subscribed even while locked, so state/config are
+    // already current here - just retake the tab lock.
     localStorage.setItem(ACTIVE_TAB_KEY, JSON.stringify({ uid: user.uid, tabId, ts: Date.now() }));
     setTabLocked(false);
   }
@@ -284,7 +321,8 @@ export default function App() {
     await AsyncStorage.multiRemove([STORE_KEY, CONFIG_KEY, STATE_SYNCED_KEY, CONFIG_SYNCED_KEY]);
     setState({});
     setConfig(EMPTY_CONFIG);
-    syncedUid.current = null;
+    lastStateAt.current = 0;
+    lastConfigAt.current = 0;
     autoOpenedWizard.current = false;
   }
 
