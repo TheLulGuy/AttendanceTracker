@@ -1,5 +1,7 @@
 # Attendance Edge
 
+Current version: v1.3.0
+
 React Native attendance tracker for college, universally implemented for all college time tables
 
 ## Features
