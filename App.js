@@ -94,6 +94,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [authResolved, setAuthResolved] = useState(false);
+  const [stateLoaded, setStateLoaded] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
   const autoOpenedWizard = useRef(false);
 
   const saveTimer   = useRef(null);
@@ -130,8 +132,9 @@ export default function App() {
           } catch(_) {}
         }
         didInit.current = true;
+        setStateLoaded(true);
       })
-      .catch(() => { didInit.current = true; });
+      .catch(() => { didInit.current = true; setStateLoaded(true); });
   }, []);
 
   // ── AsyncStorage: auto-save attendance on every state change ──
@@ -164,8 +167,9 @@ export default function App() {
           } catch(_) {}
         }
         didInitCfg.current = true;
+        setConfigLoaded(true);
       })
-      .catch(() => { didInitCfg.current = true; });
+      .catch(() => { didInitCfg.current = true; setConfigLoaded(true); });
   }, []);
 
   // ── AsyncStorage: auto-save semester config on every change ──
@@ -189,8 +193,11 @@ export default function App() {
   useEffect(() => onAuthStateChanged(auth, u => { setUser(u); setAuthResolved(true); }), []);
 
   // ── Firebase: pull-or-push last-write-wins merge once per login ──
+  // Waits for both local AsyncStorage loads to finish first - otherwise this could read the
+  // still-empty initial state/config (a real race: Firebase auth can restore faster than the
+  // local read) and push that blank data up, overwriting real data already in Firestore.
   useEffect(() => {
-    if (!user || syncedUid.current === user.uid) return;
+    if (!user || !stateLoaded || !configLoaded || syncedUid.current === user.uid) return;
     syncedUid.current = user.uid;
     (async () => {
       try {
@@ -222,17 +229,17 @@ export default function App() {
         }
       } catch (_) {}
     })();
-  }, [user]);
+  }, [user, stateLoaded, configLoaded]);
 
   const hasConfigured = Object.values(config.schedule).some(day => day.length > 0);
 
   // ── Auto-open Settings once for a signed-in user who hasn't set up a schedule yet ──
   useEffect(() => {
-    if (user && !hasConfigured && !autoOpenedWizard.current) {
+    if (user && configLoaded && !hasConfigured && !autoOpenedWizard.current) {
       autoOpenedWizard.current = true;
       setSettingsOpen(true);
     }
-  }, [user, hasConfigured]);
+  }, [user, configLoaded, hasConfigured]);
 
   function flash(msg, ms=3000) { setStatus(msg); setTimeout(() => setStatus(''), ms); }
 
