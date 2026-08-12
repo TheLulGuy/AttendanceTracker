@@ -330,12 +330,12 @@ export default function App() {
     { label:'End Semester', cutoff:dispDate(config.semEnd), pct, known:true },
   ];
 
-  // ── Calendar weeks ──
+  // ── Calendar weeks — align each day under its actual Mon–Fri column ──
   const weeks = [];
-  for (let i = 0; i < SEM.length; ) {
-    const row = [];
-    for (let j = 0; j < 5 && i < SEM.length; j++, i++) row.push(SEM[i]);
-    weeks.push(row);
+  let curWeek = null;
+  for (const d of SEM) {
+    if (d.dow === 1 || !curWeek) { curWeek = [null,null,null,null,null]; weeks.push(curWeek); }
+    curWeek[d.dow-1] = d;
   }
 
   // ── Selected day ──
@@ -474,7 +474,8 @@ export default function App() {
           </View>
           {weeks.map((week,wi)=>(
             <View key={wi} className="flex-row items-center gap-1 mb-1">
-              {week.map(d => {
+              {week.map((d, di) => {
+                if (!d) return <View key={`blank-${di}`} className="flex-1" />;
                 const lk       = lockedStatus(d.date);
                 const isToday  = d.date === TODAY;
                 const isFuture = d.date > TODAY;
@@ -500,7 +501,6 @@ export default function App() {
                   </Pressable>
                 );
               })}
-              {Array.from({ length: 5 - week.length }, (_, i) => <View key={`pad-${i}`} className="flex-1" />)}
             </View>
           ))}
           {/* Legend */}
