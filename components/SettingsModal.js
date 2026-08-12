@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, Pressable, TextInput, Modal, Alert, Platform } from 'react-native';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
@@ -63,6 +63,34 @@ function AccountSection({ user, onSignOut }) {
         <Pressable onPress={onSignOut} className="border border-red bg-reddim rounded-[7px] px-2.5 py-1.5">
           <Text className="font-mono text-[10px] text-red">Log Out</Text>
         </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function ThresholdSection({ config, setConfig }) {
+  const [text, setText] = useState(String(config.threshold));
+  useEffect(() => setText(String(config.threshold)), [config.threshold]);
+
+  function commit() {
+    const n = parseInt(text, 10);
+    const clamped = isNaN(n) ? config.threshold : Math.min(100, Math.max(0, n));
+    setText(String(clamped));
+    setConfig(c => ({ ...c, threshold: clamped }));
+  }
+
+  return (
+    <View className="mb-5">
+      <SectionLabel>Attendance Threshold</SectionLabel>
+      <View className="flex-row items-center gap-2">
+        <TextInput
+          value={text}
+          onChangeText={setText}
+          onBlur={commit}
+          keyboardType="number-pad"
+          className="border border-border rounded-lg px-2.5 py-2 bg-panel2 text-ink font-mono text-[12px] w-[60px] text-center"
+        />
+        <Text className="font-mono text-[10px] text-muted2 flex-1">% minimum required to stay exam-eligible (default 75)</Text>
       </View>
     </View>
   );
@@ -178,6 +206,8 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                 <DateChip label="End"   value={config.semEnd}   onChange={d => update(d < config.semStart ? { semEnd:d, semStart:d } : { semEnd:d })} />
               </View>
             </View>
+
+            <ThresholdSection config={config} setConfig={setConfig} />
 
             {/* ── Holidays ── */}
             <View className="mb-5">

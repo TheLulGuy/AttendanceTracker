@@ -23,7 +23,6 @@ import { version as APP_VERSION } from './package.json';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-const THRESHOLD  = 75;
 const STORE_KEY  = 'gitam-att-v5';
 const CONFIG_KEY = 'gitam-att-config-v1';
 const STATE_SYNCED_KEY  = 'gitam-att-v5-synced-at';
@@ -77,10 +76,10 @@ function mixClass(mix) {
   if (mix === 'partial') return { bg:'bg-amberdim', text:'text-amber' };
   return { bg:'bg-cyandim', text:'text-cyan' };
 }
-function barTone(pct) {
-  return pct < 75 ? { text:'text-red', bg:'bg-red' }
-       : pct < 82 ? { text:'text-amber', bg:'bg-amber' }
-       :             { text:'text-cyan', bg:'bg-cyan' };
+function barTone(pct, threshold) {
+  return pct < threshold     ? { text:'text-red', bg:'bg-red' }
+       : pct < threshold + 7 ? { text:'text-amber', bg:'bg-amber' }
+       :                        { text:'text-cyan', bg:'bg-cyan' };
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -410,7 +409,7 @@ export default function App() {
   const sf   = calcStats(state, TODAY);
   const pct   = full.th ? full.ta / full.th * 100 : 0;
   const sfPct = sf.th   ? sf.ta   / sf.th   * 100 : 100;
-  const tone  = barTone(pct);
+  const tone  = barTone(pct, config.threshold);
 
   const GATES = [
     ...config.exams.map(e => {
@@ -505,7 +504,7 @@ export default function App() {
             <Text className={`font-sans text-4xl font-extrabold leading-[42px] ${tone.text}`}>
               {pct.toFixed(1)}<Text className="font-sans text-sm font-normal text-muted">%</Text>
             </Text>
-            <Text className="font-mono text-[10px] text-muted">target 82% · floor 75%</Text>
+            <Text className="font-mono text-[10px] text-muted">target {config.threshold + 7}% · floor {config.threshold}%</Text>
           </View>
           {/* Bar track */}
           <View className="h-2.5 rounded-md overflow-hidden bg-track my-2">
@@ -526,10 +525,10 @@ export default function App() {
         </View>
 
         {/* ── Eligibility Gates ── */}
-        <Text className="font-mono text-[10px] tracking-[2px] uppercase mb-2 text-muted">Exam Eligibility · need ≥75%</Text>
+        <Text className="font-mono text-[10px] tracking-[2px] uppercase mb-2 text-muted">Exam Eligibility · need ≥{config.threshold}%</Text>
         <View className="flex-row items-center gap-2 mb-[18px]">
           {GATES.map(({ label, cutoff, pct:p, known }) => {
-            const eligible   = known && p != null && p >= THRESHOLD;
+            const eligible   = known && p != null && p >= config.threshold;
             const textClass  = !known ? 'text-muted2' : eligible ? 'text-cyan' : 'text-red';
             const borderClass= !known ? 'border-border' : eligible ? 'border-cyan' : 'border-red';
             const badgeBg    = !known ? 'bg-holidaybg' : eligible ? 'bg-cyandim' : 'bg-reddim';
