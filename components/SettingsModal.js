@@ -4,8 +4,8 @@ import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fmt, parseDate } from '../lib/dates';
-import { DAYNAME } from '../lib/constants';
-import { DEFAULT_CONFIG } from '../lib/defaultConfig';
+import { DAYNAME, OWNER_EMAIL } from '../lib/constants';
+import { DEFAULT_CONFIG, EMPTY_CONFIG } from '../lib/defaultConfig';
 import WebDatePicker from './WebDatePicker';
 
 function openDatePicker(value, onChange) {
@@ -54,7 +54,21 @@ function RemoveBtn({ onPress }) {
   );
 }
 
-export default function SettingsModal({ visible, onClose, config, setConfig }) {
+function AccountSection({ user, onSignOut }) {
+  return (
+    <View className="mb-5">
+      <SectionLabel>Account</SectionLabel>
+      <View className="bg-panel border border-border rounded-xl p-3 flex-row items-center justify-between">
+        <Text className="font-sans text-[12px] text-ink flex-1" numberOfLines={1}>{user.email}</Text>
+        <Pressable onPress={onSignOut} className="border border-red bg-reddim rounded-[7px] px-2.5 py-1.5">
+          <Text className="font-mono text-[10px] text-red">Log Out</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+export default function SettingsModal({ visible, onClose, config, setConfig, user, onSignOut }) {
   const insets = useSafeAreaInsets();
   const [newHolidayDate,    setNewHolidayDate]    = useState(fmt(new Date()));
   const [newHolidayEnd,     setNewHolidayEnd]     = useState(fmt(new Date()));
@@ -117,19 +131,28 @@ export default function SettingsModal({ visible, onClose, config, setConfig }) {
     setConfig(c => ({ ...c, schedule: { ...c.schedule, [selDay]: c.schedule[selDay].filter(s => s.key!==key) } }));
   }
 
+  const isOwner = user?.email === OWNER_EMAIL;
+  const hasConfigured = Object.values(config.schedule).some(day => day.length > 0);
+
   function resetDefault() {
-    Alert.alert('Reset Settings', 'Restore the default GITAM Bengaluru semester? This discards your schedule, exam, and holiday edits.', [
-      { text:'Cancel', style:'cancel' },
-      { text:'Reset', style:'destructive', onPress: () => setConfig(DEFAULT_CONFIG) },
-    ]);
+    const target = isOwner ? DEFAULT_CONFIG : EMPTY_CONFIG;
+    Alert.alert(
+      'Reset Settings',
+      isOwner ? 'Restore the default GITAM Bengaluru semester? This discards your schedule, exam, and holiday edits.'
+              : 'Clear your semester setup? This discards your schedule, exam, and holiday edits.',
+      [
+        { text:'Cancel', style:'cancel' },
+        { text:'Reset', style:'destructive', onPress: () => setConfig(target) },
+      ]
+    );
   }
 
   const daySlots = config.schedule[selDay] || [];
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View className="flex-1 justify-end bg-black/75">
-        <View className="bg-panel2 rounded-t-[20px] p-5 max-h-[92%]" style={{ paddingTop: Math.max(20, insets.top + 14) }}>
+      <View className="flex-1 justify-end bg-black/75 sm:justify-center sm:p-6">
+        <View className="bg-panel2 rounded-t-[20px] p-5 max-h-[92%] sm:max-w-[560px] sm:w-full sm:mx-auto sm:rounded-[20px]" style={{ paddingTop: Math.max(20, insets.top + 14) }}>
           <View className="flex-row items-center justify-between mb-4">
             <Text className="font-sans text-[17px] font-bold text-ink">Settings</Text>
             <Pressable onPress={onClose} className="border px-2.5 py-1.5 rounded-[7px] border-border">
@@ -138,6 +161,14 @@ export default function SettingsModal({ visible, onClose, config, setConfig }) {
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false}>
+
+            <AccountSection user={user} onSignOut={onSignOut} />
+
+            {!hasConfigured && (
+              <View className="bg-cyandim border border-cyan rounded-xl p-3 mb-5">
+                <Text className="font-sans text-[12px] text-cyan">Welcome — set up your semester below to get started.</Text>
+              </View>
+            )}
 
             {/* ── Semester Length ── */}
             <View className="mb-5">

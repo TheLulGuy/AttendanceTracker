@@ -18,5 +18,5 @@ React Native attendance tracker for college, universally implemented for all col
 
 ## Data persistence
 
-Uses `@react-native-async-storage/async-storage` — data survives app restarts indefinitely. No server, no account needed.
+Sign in with email/password to use the app. Data is saved locally (`@react-native-async-storage/async-storage`) and synced to your account via Firebase, so it carries over across devices.
 

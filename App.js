@@ -10,16 +10,23 @@ import * as SplashScreen from 'expo-splash-screen';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { fmt, parseDate, addDays } from './lib/dates';
-import { MONTHS, DAYNAME } from './lib/constants';
-import { DEFAULT_CONFIG } from './lib/defaultConfig';
+import { MONTHS, DAYNAME, OWNER_EMAIL } from './lib/constants';
+import { DEFAULT_CONFIG, EMPTY_CONFIG } from './lib/defaultConfig';
+import { migrateConfig } from './lib/configMigration';
+import { auth } from './lib/firebase';
+import { pushState, pushConfig, pullState, pullConfig } from './lib/sync';
 import SettingsModal from './components/SettingsModal';
+import LoginScreen from './components/LoginScreen';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const THRESHOLD  = 75;
 const STORE_KEY  = 'gitam-att-v5';
 const CONFIG_KEY = 'gitam-att-config-v1';
+const STATE_SYNCED_KEY  = 'gitam-att-v5-synced-at';
+const CONFIG_SYNCED_KEY = 'gitam-att-config-v1-synced-at';
 
 // One-off cancellations: GCGC1021 cancelled on Jul 3
 const OVERRIDES = { '2026-07-03': s => s.filter(x => x.course !== 'GCGC1021') };
@@ -82,13 +89,17 @@ export default function App() {
   const [sel,      setSel]      = useState(null);   // selected date string
   const [dayModal, setDayModal] = useState(false);
   const [status,   setStatus]   = useState('');
-  const [config,   setConfig]   = useState(DEFAULT_CONFIG);
+  const [config,   setConfig]   = useState(EMPTY_CONFIG);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [user, setUser] = useState(null);
+  const [authResolved, setAuthResolved] = useState(false);
+  const autoOpenedWizard = useRef(false);
 
   const saveTimer   = useRef(null);
   const didInit     = useRef(false);
   const cfgSaveTimer = useRef(null);
   const didInitCfg  = useRef(false);
+  const syncedUid   = useRef(null);
 
   const [fontsLoaded] = useFonts({
     SpaceGrotesk: require('./assets/fonts/SpaceGrotesk-Variable.ttf'),
@@ -129,10 +140,17 @@ export default function App() {
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       AsyncStorage.setItem(STORE_KEY, JSON.stringify(state))
-        .then(() => flash('✓ saved'))
+        .then(() => {
+          flash('✓ saved');
+          if (user) {
+            pushState(user.uid, state)
+              .then(() => AsyncStorage.setItem(STATE_SYNCED_KEY, String(Date.now())))
+              .catch(() => {});
+          }
+        })
         .catch(() => setStatus(''));
     }, 400);
-  }, [state]);
+  }, [state, user]);
 
   // ── AsyncStorage: load semester config once on mount ──
   useEffect(() => {
@@ -140,16 +158,8 @@ export default function App() {
       .then(raw => {
         if (raw) {
           try {
-            const parsed = JSON.parse(raw);
-            if (parsed && typeof parsed === 'object' && parsed.schedule) {
-              // migrate any holidays saved with the old {startDate,endDate} shape back to {date,endDate?}
-              parsed.holidays = (parsed.holidays || []).map(h => ({
-                date: h.date || h.startDate,
-                ...(h.endDate && h.endDate !== (h.date || h.startDate) ? { endDate:h.endDate } : {}),
-                label: h.label,
-              }));
-              setConfig(parsed);
-            }
+            const migrated = migrateConfig(JSON.parse(raw));
+            if (migrated) setConfig(migrated);
           } catch(_) {}
         }
         didInitCfg.current = true;
@@ -162,11 +172,78 @@ export default function App() {
     if (!didInitCfg.current) return;
     clearTimeout(cfgSaveTimer.current);
     cfgSaveTimer.current = setTimeout(() => {
-      AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(config)).catch(() => {});
+      AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(config))
+        .then(() => {
+          if (user) {
+            pushConfig(user.uid, config)
+              .then(() => AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(Date.now())))
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
     }, 400);
-  }, [config]);
+  }, [config, user]);
+
+  // ── Firebase: track signed-in user ──
+  useEffect(() => onAuthStateChanged(auth, u => { setUser(u); setAuthResolved(true); }), []);
+
+  // ── Firebase: pull-or-push last-write-wins merge once per login ──
+  useEffect(() => {
+    if (!user || syncedUid.current === user.uid) return;
+    syncedUid.current = user.uid;
+    (async () => {
+      try {
+        const [localStateAt, localConfigAt, cloudState, cloudConfig] = await Promise.all([
+          AsyncStorage.getItem(STATE_SYNCED_KEY),
+          AsyncStorage.getItem(CONFIG_SYNCED_KEY),
+          pullState(user.uid),
+          pullConfig(user.uid),
+        ]);
+
+        if (cloudState && cloudState.updatedAt > Number(localStateAt || 0)) {
+          setState(cloudState.data || {});
+          await AsyncStorage.setItem(STATE_SYNCED_KEY, String(cloudState.updatedAt));
+        } else {
+          await pushState(user.uid, state);
+          await AsyncStorage.setItem(STATE_SYNCED_KEY, String(Date.now()));
+        }
+
+        if (cloudConfig && cloudConfig.updatedAt > Number(localConfigAt || 0)) {
+          const migrated = migrateConfig(cloudConfig.data);
+          if (migrated) setConfig(migrated);
+          await AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(cloudConfig.updatedAt));
+        } else {
+          // First sync ever for the owner's account: seed the real GITAM schedule instead of a blank one.
+          const seed = (!cloudConfig && !localConfigAt && user.email === OWNER_EMAIL) ? DEFAULT_CONFIG : config;
+          if (seed !== config) setConfig(seed);
+          await pushConfig(user.uid, seed);
+          await AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(Date.now()));
+        }
+      } catch (_) {}
+    })();
+  }, [user]);
+
+  const hasConfigured = Object.values(config.schedule).some(day => day.length > 0);
+
+  // ── Auto-open Settings once for a signed-in user who hasn't set up a schedule yet ──
+  useEffect(() => {
+    if (user && !hasConfigured && !autoOpenedWizard.current) {
+      autoOpenedWizard.current = true;
+      setSettingsOpen(true);
+    }
+  }, [user, hasConfigured]);
 
   function flash(msg, ms=3000) { setStatus(msg); setTimeout(() => setStatus(''), ms); }
+
+  // ── Firebase: sign out and wipe the local cache so the next login on this device starts clean ──
+  async function handleSignOut() {
+    await signOut(auth);
+    await AsyncStorage.multiRemove([STORE_KEY, CONFIG_KEY, STATE_SYNCED_KEY, CONFIG_SYNCED_KEY]);
+    setState({});
+    setConfig(EMPTY_CONFIG);
+    syncedUid.current = null;
+    autoOpenedWizard.current = false;
+  }
 
   // ── Actions ──
   function toggleSlot(ds, key) {
@@ -207,7 +284,7 @@ export default function App() {
   }
   function slotsFor(ds, dow) {
     const base = config.schedule[dow] || [];
-    return OVERRIDES[ds] ? OVERRIDES[ds](base) : base;
+    return user?.email === OWNER_EMAIL && OVERRIDES[ds] ? OVERRIDES[ds](base) : base;
   }
   function dayMix(state, ds, dow) {
     const slots = slotsFor(ds, dow);
@@ -266,12 +343,33 @@ export default function App() {
   const selLocked = sel ? lockedStatus(sel) : null;
   const selSlots  = selDay && !selLocked ? slotsFor(selDay.date, selDay.dow) : [];
 
+  if (!authResolved) {
+    return (
+      <SafeAreaProvider>
+        <View className="flex-1 bg-bg" onLayout={onLayoutRootView} />
+      </SafeAreaProvider>
+    );
+  }
+
+  if (!user) {
+    return (
+      <SafeAreaProvider>
+        <View className="flex-1 bg-bg justify-center items-center p-6" onLayout={onLayoutRootView}>
+          <Text className="font-sans text-2xl font-extrabold text-ink mb-5">Attendance Edge</Text>
+          <View className="w-full max-w-[360px]">
+            <LoginScreen />
+          </View>
+        </View>
+      </SafeAreaProvider>
+    );
+  }
+
   return (
     <SafeAreaProvider>
     <View className="flex-1 bg-bg" onLayout={onLayoutRootView}>
       <StatusBar hidden />
 
-      <ScrollView className="flex-1" contentContainerClassName="p-4 pb-[60px]" showsVerticalScrollIndicator={false}>
+      <ScrollView className="flex-1" contentContainerClassName="p-4 pb-[60px] sm:max-w-[640px] sm:w-full sm:mx-auto sm:p-6" showsVerticalScrollIndicator={false}>
 
         {/* ── Header ── */}
         <View className="flex-row items-start justify-between mb-[3px]">
@@ -423,8 +521,8 @@ export default function App() {
 
       {/* ══ Day Detail Modal ══ */}
       <Modal visible={dayModal} transparent animationType="slide" onRequestClose={()=>setDayModal(false)}>
-        <View className="flex-1 justify-end bg-black/75">
-          <View className="bg-panel2 rounded-t-[20px] p-5 max-h-[80%]">
+        <View className="flex-1 justify-end bg-black/75 sm:justify-center sm:p-6">
+          <View className="bg-panel2 rounded-t-[20px] p-5 max-h-[80%] sm:max-w-[560px] sm:w-full sm:mx-auto sm:rounded-[20px]">
             {selDay && (
               <>
                 <View className="flex-row flex-wrap gap-2 mb-3.5">
@@ -484,6 +582,8 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         config={config}
         setConfig={setConfig}
+        user={user}
+        onSignOut={handleSignOut}
       />
     </View>
     </SafeAreaProvider>
