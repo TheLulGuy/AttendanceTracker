@@ -98,6 +98,8 @@ export default function App() {
   const [configLoaded, setConfigLoaded] = useState(false);
   const [tabLocked, setTabLocked] = useState(false);
   const [closeAttempted, setCloseAttempted] = useState(false);
+  const [stateSyncReady, setStateSyncReady] = useState(false);
+  const [configSyncReady, setConfigSyncReady] = useState(false);
   const autoOpenedWizard = useRef(false);
   const tabId = useRef(Math.random().toString(36).slice(2) + Date.now()).current;
 
@@ -160,7 +162,10 @@ export default function App() {
         .then(() => {
           if (isRemote) return;
           flash('✓ saved');
-          if (user && !tabLocked) {
+          // Never push before the live listener has confirmed the real cloud state at least
+          // once - otherwise this can race ahead of it and overwrite real cloud data with
+          // whatever's still sitting in the pre-sync initial/local state.
+          if (user && !tabLocked && stateSyncReady) {
             pushState(user.uid, state)
               .then(updatedAt => {
                 lastStateAt.current = updatedAt;
@@ -171,7 +176,7 @@ export default function App() {
         })
         .catch(() => setStatus(''));
     }, 400);
-  }, [state, user, tabLocked]);
+  }, [state, user, tabLocked, stateSyncReady]);
 
   // ── AsyncStorage: load semester config once on mount ──
   useEffect(() => {
@@ -199,7 +204,10 @@ export default function App() {
       AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(config))
         .then(() => {
           if (isRemote) return;
-          if (user && !tabLocked) {
+          // Same reasoning as the state save effect above - wait for the live listener's
+          // first real snapshot before ever pushing, so a fresh/empty local config can't
+          // race ahead of the actual cloud data and overwrite it.
+          if (user && !tabLocked && configSyncReady) {
             pushConfig(user.uid, config)
               .then(updatedAt => {
                 lastConfigAt.current = updatedAt;
@@ -210,7 +218,7 @@ export default function App() {
         })
         .catch(() => {});
     }, 400);
-  }, [config, user, tabLocked]);
+  }, [config, user, tabLocked, configSyncReady]);
 
   // ── Firebase: track signed-in user ──
   useEffect(() => onAuthStateChanged(auth, u => { setUser(u); setAuthResolved(true); }), []);
@@ -227,6 +235,8 @@ export default function App() {
     let cancelled = false;
     let unsubState = () => {};
     let unsubConfig = () => {};
+    setStateSyncReady(false);
+    setConfigSyncReady(false);
 
     (async () => {
       const [localStateAt, localConfigAt] = await Promise.all([
@@ -245,14 +255,18 @@ export default function App() {
             setState(cloud.data || {});
             AsyncStorage.setItem(STATE_SYNCED_KEY, String(cloud.updatedAt)).catch(() => {});
           }
+          setStateSyncReady(true);
         } else if (lastStateAt.current === 0) {
           // No cloud doc at all yet - seed it from whatever's currently local.
           pushState(user.uid, stateRef.current)
             .then(updatedAt => {
               lastStateAt.current = updatedAt;
+              setStateSyncReady(true);
               return AsyncStorage.setItem(STATE_SYNCED_KEY, String(updatedAt));
             })
-            .catch(() => {});
+            .catch(() => setStateSyncReady(true));
+        } else {
+          setStateSyncReady(true);
         }
       });
 
@@ -267,6 +281,7 @@ export default function App() {
               AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(cloud.updatedAt)).catch(() => {});
             }
           }
+          setConfigSyncReady(true);
         } else if (lastConfigAt.current === 0) {
           // First sync ever for this account: seed the real GITAM schedule for the owner, blank for everyone else.
           const seed = user.email === OWNER_EMAIL ? DEFAULT_CONFIG : configRef.current;
@@ -274,9 +289,12 @@ export default function App() {
           pushConfig(user.uid, seed)
             .then(updatedAt => {
               lastConfigAt.current = updatedAt;
+              setConfigSyncReady(true);
               return AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(updatedAt));
             })
-            .catch(() => {});
+            .catch(() => setConfigSyncReady(true));
+        } else {
+          setConfigSyncReady(true);
         }
       });
     })();
@@ -332,6 +350,8 @@ export default function App() {
     setConfig(EMPTY_CONFIG);
     lastStateAt.current = 0;
     lastConfigAt.current = 0;
+    setStateSyncReady(false);
+    setConfigSyncReady(false);
     autoOpenedWizard.current = false;
   }
 
