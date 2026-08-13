@@ -3,7 +3,7 @@
     "name": "Attendance Edge",
     "slug": "gitam-attendance",
     "owner": "ombanerjee",
-    "version": "1.4.6",
+    "version": "1.4.7",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.jpeg",

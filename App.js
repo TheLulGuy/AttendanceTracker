@@ -9,7 +9,6 @@ import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { fmt, parseDate, addDays } from './lib/dates';
 import { MONTHS, DAYNAME, OWNER_EMAIL } from './lib/constants';
@@ -17,6 +16,7 @@ import { DEFAULT_CONFIG, EMPTY_CONFIG } from './lib/defaultConfig';
 import { migrateConfig } from './lib/configMigration';
 import { auth } from './lib/firebase';
 import { pushState, pushConfig, subscribeState, subscribeConfig } from './lib/sync';
+import { useCloudSync } from './lib/useCloudSync';
 import SettingsModal from './components/SettingsModal';
 import LoginScreen from './components/LoginScreen';
 import { version as APP_VERSION } from './package.json';
@@ -25,8 +25,6 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const STORE_KEY  = 'gitam-att-v5';
 const CONFIG_KEY = 'gitam-att-config-v1';
-const STATE_SYNCED_KEY  = 'gitam-att-v5-synced-at';
-const CONFIG_SYNCED_KEY = 'gitam-att-config-v1-synced-at';
 const ACTIVE_TAB_KEY    = 'gitam-active-tab';
 
 // One-off cancellations: GCGC1021 cancelled on Jul 3
@@ -86,36 +84,45 @@ function barTone(pct, threshold) {
 export default function App() {
   const { width } = useWindowDimensions();
 
-  const [state,    setState]    = useState({});
   const [sel,      setSel]      = useState(null);   // selected date string
   const [dayModal, setDayModal] = useState(false);
   const [status,   setStatus]   = useState('');
-  const [config,   setConfig]   = useState(EMPTY_CONFIG);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [authResolved, setAuthResolved] = useState(false);
-  const [stateLoaded, setStateLoaded] = useState(false);
-  const [configLoaded, setConfigLoaded] = useState(false);
   const [tabLocked, setTabLocked] = useState(false);
   const [closeAttempted, setCloseAttempted] = useState(false);
-  const [stateSyncReady, setStateSyncReady] = useState(false);
-  const [configSyncReady, setConfigSyncReady] = useState(false);
   const autoOpenedWizard = useRef(false);
   const tabId = useRef(Math.random().toString(36).slice(2) + Date.now()).current;
 
-  const saveTimer   = useRef(null);
-  const didInit     = useRef(false);
-  const cfgSaveTimer = useRef(null);
-  const didInitCfg  = useRef(false);
-  const stateRef    = useRef(state);
-  const configRef   = useRef(config);
-  const lastStateAt  = useRef(0);
-  const lastConfigAt = useRef(0);
-  const suppressStatePush  = useRef(false);
-  const suppressConfigPush = useRef(false);
+  function flash(msg, ms=3000) { setStatus(msg); setTimeout(() => setStatus(''), ms); }
 
-  useEffect(() => { stateRef.current = state; }, [state]);
-  useEffect(() => { configRef.current = config; }, [config]);
+  const {
+    data: state, setData: setState, ready: stateLoaded, reset: resetStateSync,
+  } = useCloudSync({
+    storageKey: STORE_KEY,
+    initial: {},
+    migrate: parsed => (parsed && typeof parsed === 'object' && Object.keys(parsed).length ? parsed : null),
+    push: pushState,
+    subscribe: subscribeState,
+    user, tabLocked,
+    onLoad: applied => { if (applied) flash('✓ loaded'); },
+    onSaving: () => setStatus('saving…'),
+    onSaved: () => flash('✓ saved'),
+  });
+
+  const {
+    data: config, setData: setConfig, ready: configLoaded, reset: resetConfigSync,
+  } = useCloudSync({
+    storageKey: CONFIG_KEY,
+    initial: EMPTY_CONFIG,
+    migrate: migrateConfig,
+    push: pushConfig,
+    subscribe: subscribeConfig,
+    user, tabLocked,
+    // First-ever sync for this account: seed the real GITAM schedule for the owner, blank for everyone else.
+    seedFor: (u, current) => u.email === OWNER_EMAIL ? DEFAULT_CONFIG : current,
+  });
 
   const [fontsLoaded] = useFonts({
     SpaceGrotesk: require('./assets/fonts/SpaceGrotesk-Variable.ttf'),
@@ -131,176 +138,8 @@ export default function App() {
   const SEM = useMemo(() => buildSem(config.semStart, config.semEnd), [config.semStart, config.semEnd]);
   const { COURSES, CLABEL } = useMemo(() => deriveCourses(config.schedule), [config.schedule]);
 
-  // ── AsyncStorage: load attendance once on mount ──
-  useEffect(() => {
-    AsyncStorage.getItem(STORE_KEY)
-      .then(raw => {
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed && typeof parsed === 'object' && Object.keys(parsed).length) {
-              setState(parsed);
-              flash('✓ loaded');
-            }
-          } catch(_) {}
-        }
-        didInit.current = true;
-        setStateLoaded(true);
-      })
-      .catch(() => { didInit.current = true; setStateLoaded(true); });
-  }, []);
-
-  // ── AsyncStorage: auto-save attendance on every state change ──
-  useEffect(() => {
-    if (!didInit.current) return;   // never overwrite on the initial empty render
-    const isRemote = suppressStatePush.current;
-    suppressStatePush.current = false;
-    if (!isRemote) setStatus('saving…');
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      AsyncStorage.setItem(STORE_KEY, JSON.stringify(state))
-        .then(() => {
-          if (isRemote) return;
-          flash('✓ saved');
-          // Never push before the live listener has confirmed the real cloud state at least
-          // once - otherwise this can race ahead of it and overwrite real cloud data with
-          // whatever's still sitting in the pre-sync initial/local state.
-          if (user && !tabLocked && stateSyncReady) {
-            pushState(user.uid, state)
-              .then(updatedAt => {
-                lastStateAt.current = updatedAt;
-                return AsyncStorage.setItem(STATE_SYNCED_KEY, String(updatedAt));
-              })
-              .catch(() => {});
-          }
-        })
-        .catch(() => setStatus(''));
-    }, 400);
-  }, [state, user, tabLocked, stateSyncReady]);
-
-  // ── AsyncStorage: load semester config once on mount ──
-  useEffect(() => {
-    AsyncStorage.getItem(CONFIG_KEY)
-      .then(raw => {
-        if (raw) {
-          try {
-            const migrated = migrateConfig(JSON.parse(raw));
-            if (migrated) setConfig(migrated);
-          } catch(_) {}
-        }
-        didInitCfg.current = true;
-        setConfigLoaded(true);
-      })
-      .catch(() => { didInitCfg.current = true; setConfigLoaded(true); });
-  }, []);
-
-  // ── AsyncStorage: auto-save semester config on every change ──
-  useEffect(() => {
-    if (!didInitCfg.current) return;
-    const isRemote = suppressConfigPush.current;
-    suppressConfigPush.current = false;
-    clearTimeout(cfgSaveTimer.current);
-    cfgSaveTimer.current = setTimeout(() => {
-      AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(config))
-        .then(() => {
-          if (isRemote) return;
-          // Same reasoning as the state save effect above - wait for the live listener's
-          // first real snapshot before ever pushing, so a fresh/empty local config can't
-          // race ahead of the actual cloud data and overwrite it.
-          if (user && !tabLocked && configSyncReady) {
-            pushConfig(user.uid, config)
-              .then(updatedAt => {
-                lastConfigAt.current = updatedAt;
-                return AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(updatedAt));
-              })
-              .catch(() => {});
-          }
-        })
-        .catch(() => {});
-    }, 400);
-  }, [config, user, tabLocked, configSyncReady]);
-
   // ── Firebase: track signed-in user ──
   useEffect(() => onAuthStateChanged(auth, u => { setUser(u); setAuthResolved(true); }), []);
-
-  // ── Firebase: live sync via Firestore listeners, not just once at login ──
-  // A one-time pull isn't enough: a device left open across an edit made on another device
-  // would never learn the cloud moved on, and its next save would blindly overwrite the newer
-  // data with its now-stale copy. Live listeners keep every open device continuously current.
-  // Also waits for both local AsyncStorage loads first - otherwise this could read the still-
-  // empty initial state/config (auth can restore faster than the local read) and treat that as
-  // authoritative.
-  useEffect(() => {
-    if (!user || !stateLoaded || !configLoaded) return;
-    let cancelled = false;
-    let unsubState = () => {};
-    let unsubConfig = () => {};
-    setStateSyncReady(false);
-    setConfigSyncReady(false);
-
-    (async () => {
-      const [localStateAt, localConfigAt] = await Promise.all([
-        AsyncStorage.getItem(STATE_SYNCED_KEY),
-        AsyncStorage.getItem(CONFIG_SYNCED_KEY),
-      ]);
-      if (cancelled) return;
-      lastStateAt.current = Number(localStateAt || 0);
-      lastConfigAt.current = Number(localConfigAt || 0);
-
-      unsubState = subscribeState(user.uid, cloud => {
-        if (cloud) {
-          if (cloud.updatedAt > lastStateAt.current) {
-            lastStateAt.current = cloud.updatedAt;
-            suppressStatePush.current = true;
-            setState(cloud.data || {});
-            AsyncStorage.setItem(STATE_SYNCED_KEY, String(cloud.updatedAt)).catch(() => {});
-          }
-          setStateSyncReady(true);
-        } else if (lastStateAt.current === 0) {
-          // No cloud doc at all yet - seed it from whatever's currently local.
-          pushState(user.uid, stateRef.current)
-            .then(updatedAt => {
-              lastStateAt.current = updatedAt;
-              setStateSyncReady(true);
-              return AsyncStorage.setItem(STATE_SYNCED_KEY, String(updatedAt));
-            })
-            .catch(() => setStateSyncReady(true));
-        } else {
-          setStateSyncReady(true);
-        }
-      });
-
-      unsubConfig = subscribeConfig(user.uid, cloud => {
-        if (cloud) {
-          if (cloud.updatedAt > lastConfigAt.current) {
-            const migrated = migrateConfig(cloud.data);
-            if (migrated) {
-              lastConfigAt.current = cloud.updatedAt;
-              suppressConfigPush.current = true;
-              setConfig(migrated);
-              AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(cloud.updatedAt)).catch(() => {});
-            }
-          }
-          setConfigSyncReady(true);
-        } else if (lastConfigAt.current === 0) {
-          // First sync ever for this account: seed the real GITAM schedule for the owner, blank for everyone else.
-          const seed = user.email === OWNER_EMAIL ? DEFAULT_CONFIG : configRef.current;
-          if (seed !== configRef.current) { suppressConfigPush.current = true; setConfig(seed); }
-          pushConfig(user.uid, seed)
-            .then(updatedAt => {
-              lastConfigAt.current = updatedAt;
-              setConfigSyncReady(true);
-              return AsyncStorage.setItem(CONFIG_SYNCED_KEY, String(updatedAt));
-            })
-            .catch(() => setConfigSyncReady(true));
-        } else {
-          setConfigSyncReady(true);
-        }
-      });
-    })();
-
-    return () => { cancelled = true; unsubState(); unsubConfig(); };
-  }, [user, stateLoaded, configLoaded]);
 
   // ── Web only: detect the same account open in another tab, and let only one tab stay active ──
   useEffect(() => {
@@ -340,18 +179,10 @@ export default function App() {
     }
   }, [user, configLoaded, hasConfigured]);
 
-  function flash(msg, ms=3000) { setStatus(msg); setTimeout(() => setStatus(''), ms); }
-
   // ── Firebase: sign out and wipe the local cache so the next login on this device starts clean ──
   async function handleSignOut() {
     await signOut(auth);
-    await AsyncStorage.multiRemove([STORE_KEY, CONFIG_KEY, STATE_SYNCED_KEY, CONFIG_SYNCED_KEY]);
-    setState({});
-    setConfig(EMPTY_CONFIG);
-    lastStateAt.current = 0;
-    lastConfigAt.current = 0;
-    setStateSyncReady(false);
-    setConfigSyncReady(false);
+    await Promise.all([resetStateSync({}), resetConfigSync(EMPTY_CONFIG)]);
     autoOpenedWizard.current = false;
   }
 
