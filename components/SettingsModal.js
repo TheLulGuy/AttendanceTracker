@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fmt, parseDate } from '../lib/dates';
 import { DAYNAME, OWNER_EMAIL } from '../lib/constants';
 import { DEFAULT_CONFIG, EMPTY_CONFIG } from '../lib/defaultConfig';
+import { parseScheduleText } from '../lib/scheduleImport';
 import WebDatePicker from './WebDatePicker';
 
 function openDatePicker(value, onChange) {
@@ -109,6 +110,9 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
   const [newSlotTime,   setNewSlotTime]   = useState('');
   const [newSlotCourse, setNewSlotCourse] = useState('');
   const [newSlotLabel,  setNewSlotLabel]  = useState('');
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkMsg,  setBulkMsg]  = useState('');
 
   function update(patch) { setConfig(c => ({ ...c, ...patch })); }
 
@@ -157,6 +161,16 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
   }
   function removeSlot(key) {
     setConfig(c => ({ ...c, schedule: { ...c.schedule, [selDay]: c.schedule[selDay].filter(s => s.key!==key) } }));
+  }
+
+  function importBulkSchedule() {
+    const parsed = parseScheduleText(bulkText);
+    const dows = Object.keys(parsed);
+    if (!dows.length) { setBulkMsg('No classes found — check the format.'); return; }
+    const count = dows.reduce((n, d) => n + parsed[d].length, 0);
+    setConfig(c => ({ ...c, schedule: { ...c.schedule, ...parsed } }));
+    setBulkText('');
+    setBulkMsg(`Added ${count} class${count===1?'':'es'} across ${dows.length} day${dows.length===1?'':'s'}.`);
   }
 
   const isOwner = user?.email === OWNER_EMAIL;
@@ -346,6 +360,32 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   <Ionicons name="add" size={16} color="#2DD4BF" />
                 </Pressable>
               </View>
+
+              <Pressable onPress={() => setBulkOpen(o => !o)} className="flex-row items-center gap-1 mt-2.5">
+                <Ionicons name={bulkOpen ? 'chevron-down' : 'chevron-forward'} size={12} color="#7C8B9B" />
+                <Text className="font-mono text-[10px] text-muted">Bulk Import</Text>
+              </Pressable>
+
+              {bulkOpen && (
+                <View className="bg-panel border border-border rounded-xl p-2.5 mt-1.5">
+                  <Text className="font-mono text-[9px] text-muted2 mb-1.5">
+                    {'One day name per line, then "HH:MM COURSE" per class:\nMonday\n08:00 ECE1021\n09:00 ECE1033'}
+                  </Text>
+                  <TextInput
+                    value={bulkText}
+                    onChangeText={setBulkText}
+                    multiline
+                    placeholder={'Monday\n08:00 ECE1021\n09:00 ECE1033'}
+                    placeholderTextColor="#566373"
+                    textAlignVertical="top"
+                    className="font-mono text-[11px] border border-border rounded-lg px-2.5 py-2 bg-panel2 text-ink min-h-[100px] mb-1.5"
+                  />
+                  <Pressable onPress={importBulkSchedule} className="border border-cyan bg-cyandim rounded-[7px] py-2 items-center">
+                    <Text className="font-mono text-[10px] text-cyan">Import</Text>
+                  </Pressable>
+                  {!!bulkMsg && <Text className="font-mono text-[9px] text-muted2 mt-1.5">{bulkMsg}</Text>}
+                </View>
+              )}
             </View>
 
             <Pressable onPress={resetDefault} className="border border-red bg-reddim rounded-[7px] px-2.5 py-2 items-center mt-2 mb-6">
