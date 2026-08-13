@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://attendance-tracker-omega-six.vercel.app/sitemap.xml
