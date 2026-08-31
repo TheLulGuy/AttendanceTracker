@@ -27,8 +27,9 @@ const STORE_KEY  = 'gitam-att-v5';
 const CONFIG_KEY = 'gitam-att-config-v1';
 const ACTIVE_TAB_KEY    = 'gitam-active-tab';
 
-// border-2 always (not just on today) so the today outline doesn't grow the cell and push row padding
-const CELL_BASE = 'flex-1 rounded-[7px] p-[5px] items-center relative border-2';
+// Fixed height (not content-derived) so every cell — blank, today, partial-attendance dots or not —
+// is exactly the same size by construction. border-2 always, so the today outline never grows the box.
+const CELL_BASE = 'flex-1 h-[46px] rounded-[7px] p-[5px] items-center justify-center border-2';
 
 // One-off cancellations: GCGC1021 cancelled on Jul 3
 const OVERRIDES = { '2026-07-03': s => s.filter(x => x.course !== 'GCGC1021') };
@@ -449,14 +450,7 @@ export default function App() {
               {week.map((d, di) => {
                 if (!d) return (
                   <View key={`blank-${di}`} className={`${CELL_BASE} border-transparent bg-panel2 opacity-60`}>
-                    {/* invisible ghost — same two lines as a real cell, purely to reserve identical height */}
-                    <View className="opacity-0">
-                      <Text className="font-mono-bold text-[12px]">00</Text>
-                      <Text className="font-mono text-[8px]">MMM</Text>
-                    </View>
-                    <View className="absolute inset-0 items-center justify-center">
-                      <Text className="font-mono-bold text-[12px] text-muted2">✕</Text>
-                    </View>
+                    <Text className="font-mono-bold text-[12px] text-muted2">✕</Text>
                   </View>
                 );
                 const lk       = lockedStatus(d.date);
