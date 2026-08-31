@@ -27,7 +27,8 @@ const STORE_KEY  = 'gitam-att-v5';
 const CONFIG_KEY = 'gitam-att-config-v1';
 const ACTIVE_TAB_KEY    = 'gitam-active-tab';
 
-const CELL_BASE = 'flex-1 rounded-[7px] p-[5px] items-center relative';
+// border-2 always (not just on today) so the today outline doesn't grow the cell and push row padding
+const CELL_BASE = 'flex-1 rounded-[7px] p-[5px] items-center relative border-2';
 
 // One-off cancellations: GCGC1021 cancelled on Jul 3
 const OVERRIDES = { '2026-07-03': s => s.filter(x => x.course !== 'GCGC1021') };
@@ -447,7 +448,7 @@ export default function App() {
             <View key={wi} className="flex-row items-center gap-1 mb-1">
               {week.map((d, di) => {
                 if (!d) return (
-                  <View key={`blank-${di}`} className={`${CELL_BASE} border border-transparent bg-panel2 opacity-60`}>
+                  <View key={`blank-${di}`} className={`${CELL_BASE} border-transparent bg-panel2 opacity-60`}>
                     {/* invisible ghost — same two lines as a real cell, purely to reserve identical height */}
                     <View className="opacity-0">
                       <Text className="font-mono-bold text-[12px]">00</Text>
@@ -469,7 +470,7 @@ export default function App() {
                     onPress={() => { if (lk) return; setSel(d.date); setDayModal(true); }}
                     onLongPress={() => { if (lk) return; handleLongPress(d.date, d.dow); }}
                     delayLongPress={600}
-                    className={`${CELL_BASE} ${tc.bg} ${isFuture?'opacity-60':'opacity-100'} ${isToday?'border-2 border-ink':'border border-transparent'}`}
+                    className={`${CELL_BASE} ${tc.bg} ${isFuture?'opacity-60':'opacity-100'} ${isToday?'border-ink':'border-transparent'}`}
                   >
                     <Text className={`font-mono-bold text-[12px] ${tc.text}`}>{d.day}</Text>
                     <Text className={`font-mono text-[8px] opacity-70 ${tc.text}`}>{MONTHS[d.month]}</Text>
