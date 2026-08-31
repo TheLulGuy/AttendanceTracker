@@ -363,7 +363,7 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
 
               <Pressable onPress={() => setBulkOpen(o => !o)} className="flex-row items-center gap-1 mt-2.5">
                 <Ionicons name={bulkOpen ? 'chevron-down' : 'chevron-forward'} size={12} color="#7C8B9B" />
-                <Text className="font-mono text-[10px] text-muted">Bulk Import</Text>
+                <Text className="font-mono text-[10px] text-muted">Bulk Import(Prompt Message Included)</Text>
               </Pressable>
 
               {bulkOpen && (

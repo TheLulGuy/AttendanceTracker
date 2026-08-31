@@ -27,6 +27,8 @@ const STORE_KEY  = 'gitam-att-v5';
 const CONFIG_KEY = 'gitam-att-config-v1';
 const ACTIVE_TAB_KEY    = 'gitam-active-tab';
 
+const CELL_BASE = 'flex-1 rounded-[7px] p-[5px] items-center relative';
+
 // One-off cancellations: GCGC1021 cancelled on Jul 3
 const OVERRIDES = { '2026-07-03': s => s.filter(x => x.course !== 'GCGC1021') };
 
@@ -255,20 +257,23 @@ export default function App() {
     return null;
   }
 
-  // ── Stats ──
-  const full = calcStats(state);
-  const sf   = calcStats(state, TODAY);
-  const pct   = full.th ? full.ta / full.th * 100 : 0;
-  const sfPct = sf.th   ? sf.ta   / sf.th   * 100 : 100;
+  // ── Stats ── `stats` = actual attendance through today, the number shown everywhere as "current".
+  // `gatePct(cutoff)` reruns the same calc for a future cutoff — since present() defaults unset
+  // slots to true, that projects "if I attend everything else up to this date" for each gate.
+  const stats = calcStats(state, TODAY);
+  const pct   = stats.th ? stats.ta / stats.th * 100 : 100;
   const tone  = barTone(pct, config.threshold);
 
+  function gatePct(cutoffDate) {
+    const st = calcStats(state, cutoffDate);
+    return st.th ? st.ta / st.th * 100 : 100;
+  }
   const GATES = [
     ...config.exams.map(e => {
       const cutoffDate = addDays(e.startDate, -1);
-      const st = calcStats(state, cutoffDate);
-      return { label:e.name, cutoff:dispDate(cutoffDate), pct: st.th ? st.ta/st.th*100 : 100, known:true };
+      return { label:e.name, cutoff:dispDate(cutoffDate), pct: gatePct(cutoffDate), known:true };
     }),
-    { label:'End Semester', cutoff:dispDate(config.semEnd), pct, known:true },
+    { label:'End Semester', cutoff:dispDate(config.semEnd), pct: gatePct(config.semEnd), known:true },
   ];
 
   // ── Calendar weeks — align each day under its actual Mon–Fri column ──
@@ -362,7 +367,7 @@ export default function App() {
             <View className={`h-full rounded-md ${tone.bg}`} style={{ width:`${Math.min(100,pct)}%` }} />
           </View>
           <View className="flex-row items-center gap-1.5">
-            {[['HELD',full.th],['PRESENT',full.ta],['ABSENT',full.th-full.ta]].map(([l,v])=>(
+            {[['HELD',stats.th],['PRESENT',stats.ta],['ABSENT',stats.th-stats.ta]].map(([l,v])=>(
               <Text key={l} className="font-mono text-[10px] text-muted2">{l} <Text className="text-ink">{v}</Text></Text>
             ))}
           </View>
@@ -370,7 +375,7 @@ export default function App() {
             <Text className="font-mono text-[10px] text-muted mt-2">
               {TODAY < config.semStart ? "Semester hasn't started yet" :
                TODAY > config.semEnd   ? 'Semester over' :
-               `Actual so far: ${sfPct.toFixed(1)}% (${sf.ta}/${sf.th} through today)`}
+               `Through today · ${dispDate(TODAY)}`}
             </Text>
           </View>
         </View>
@@ -407,7 +412,7 @@ export default function App() {
             ))}
           </View>
           {COURSES.map((c,i) => {
-            const h=full.h[c], a=full.a[c], p=h?a/h*100:100;
+            const h=stats.h[c], a=stats.a[c], p=h?a/h*100:100;
             const { bg, c:col } = pillClass(p);
             return (
               <View key={c} className={`flex-row items-center ${i<COURSES.length-1?'border-b border-border':''}`}>
@@ -442,8 +447,15 @@ export default function App() {
             <View key={wi} className="flex-row items-center gap-1 mb-1">
               {week.map((d, di) => {
                 if (!d) return (
-                  <View key={`blank-${di}`} className="flex-1 rounded-[7px] p-[5px] border border-transparent bg-panel2 items-center justify-center">
-                    <Text className="font-mono text-[12px] text-muted2">✕</Text>
+                  <View key={`blank-${di}`} className={`${CELL_BASE} border border-transparent bg-panel2 opacity-60`}>
+                    {/* invisible ghost — same two lines as a real cell, purely to reserve identical height */}
+                    <View className="opacity-0">
+                      <Text className="font-mono-bold text-[12px]">00</Text>
+                      <Text className="font-mono text-[8px]">MMM</Text>
+                    </View>
+                    <View className="absolute inset-0 items-center justify-center">
+                      <Text className="font-mono-bold text-[12px] text-muted2">✕</Text>
+                    </View>
                   </View>
                 );
                 const lk       = lockedStatus(d.date);
@@ -457,7 +469,7 @@ export default function App() {
                     onPress={() => { if (lk) return; setSel(d.date); setDayModal(true); }}
                     onLongPress={() => { if (lk) return; handleLongPress(d.date, d.dow); }}
                     delayLongPress={600}
-                    className={`flex-1 rounded-[7px] p-[5px] items-center ${tc.bg} ${isFuture?'opacity-60':'opacity-100'} ${isToday?'border-2 border-ink':'border border-transparent'}`}
+                    className={`${CELL_BASE} ${tc.bg} ${isFuture?'opacity-60':'opacity-100'} ${isToday?'border-2 border-ink':'border border-transparent'}`}
                   >
                     <Text className={`font-mono-bold text-[12px] ${tc.text}`}>{d.day}</Text>
                     <Text className={`font-mono text-[8px] opacity-70 ${tc.text}`}>{MONTHS[d.month]}</Text>
