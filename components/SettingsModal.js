@@ -8,6 +8,7 @@ import { DAYNAME, OWNER_EMAIL } from '../lib/constants';
 import { DEFAULT_CONFIG, EMPTY_CONFIG } from '../lib/defaultConfig';
 import { parseScheduleText } from '../lib/scheduleImport';
 import WebDatePicker from './WebDatePicker';
+import WebDateRangePicker from './WebDateRangePicker';
 
 function openDatePicker(value, onChange) {
   DateTimePickerAndroid.open({
@@ -25,11 +26,11 @@ function DateChip({ label, value, onChange }) {
   return (
     <>
       <Pressable
-        onPress={() => Platform.OS === 'web' ? setWebPickerOpen(true) : openDatePicker(value, onChange)}
+        onPress={() => Platform.OS === 'web' ? setWebPickerOpen(true) : openDatePicker(value || fmt(new Date()), onChange)}
         className="border border-border rounded-lg px-2.5 py-2 bg-panel2 flex-1"
       >
         <Text className="font-mono text-[9px] text-muted2 uppercase tracking-[1px] mb-0.5">{label}</Text>
-        <Text className="font-mono text-[12px] text-ink">{value}</Text>
+        <Text className={`font-mono text-[12px] ${value ? 'text-ink' : 'text-muted2'}`}>{value || 'Select date'}</Text>
       </Pressable>
       {Platform.OS === 'web' && (
         <WebDatePicker
@@ -39,6 +40,38 @@ function DateChip({ label, value, onChange }) {
           onClose={() => setWebPickerOpen(false)}
         />
       )}
+    </>
+  );
+}
+
+// Single calendar for picking a from/to pair (web); falls back to two separate DateChips on native,
+// since DateTimePickerAndroid has no range mode.
+function DateRangeChip({ fromLabel='Start', toLabel='End', from, to, onChange }) {
+  const [open, setOpen] = useState(false);
+
+  if (Platform.OS !== 'web') {
+    return (
+      <View className="flex-row gap-2 flex-1">
+        <DateChip label={fromLabel} value={from} onChange={d => onChange(d, d > to ? d : to)} />
+        <DateChip label={toLabel}   value={to}   onChange={d => onChange(d < from ? d : from, d)} />
+      </View>
+    );
+  }
+
+  return (
+    <>
+      <Pressable onPress={() => setOpen(true)} className="border border-border rounded-lg px-2.5 py-2 bg-panel2 flex-1 flex-row items-center justify-between gap-2">
+        <View className="flex-1">
+          <Text className="font-mono text-[9px] text-muted2 uppercase tracking-[1px] mb-0.5">{fromLabel}</Text>
+          <Text className={`font-mono text-[12px] ${from ? 'text-ink' : 'text-muted2'}`}>{from || 'Select'}</Text>
+        </View>
+        <Ionicons name="arrow-forward" size={12} color="#566373" />
+        <View className="flex-1 items-end">
+          <Text className="font-mono text-[9px] text-muted2 uppercase tracking-[1px] mb-0.5">{toLabel}</Text>
+          <Text className={`font-mono text-[12px] ${to ? 'text-ink' : 'text-muted2'}`}>{to || 'Select'}</Text>
+        </View>
+      </Pressable>
+      <WebDateRangePicker visible={open} from={from} to={to} onChange={onChange} onClose={() => setOpen(false)} />
     </>
   );
 }
@@ -99,13 +132,13 @@ function ThresholdSection({ config, setConfig }) {
 
 export default function SettingsModal({ visible, onClose, config, setConfig, user, onSignOut }) {
   const insets = useSafeAreaInsets();
-  const [newHolidayDate,    setNewHolidayDate]    = useState(fmt(new Date()));
-  const [newHolidayEnd,     setNewHolidayEnd]     = useState(fmt(new Date()));
+  const [newHolidayDate,    setNewHolidayDate]    = useState(null);
+  const [newHolidayEnd,     setNewHolidayEnd]     = useState(null);
   const [newHolidayMulti,   setNewHolidayMulti]   = useState(false);
   const [newHolidayLabel,   setNewHolidayLabel]   = useState('');
   const [newExamName,  setNewExamName]  = useState('');
-  const [newExamStart, setNewExamStart] = useState(fmt(new Date()));
-  const [newExamEnd,   setNewExamEnd]   = useState(fmt(new Date()));
+  const [newExamStart, setNewExamStart] = useState(null);
+  const [newExamEnd,   setNewExamEnd]   = useState(null);
   const [selDay, setSelDay] = useState(1);
   const [newSlotTime,   setNewSlotTime]   = useState('');
   const [newSlotCourse, setNewSlotCourse] = useState('');
@@ -117,15 +150,17 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
   function update(patch) { setConfig(c => ({ ...c, ...patch })); }
 
   function addHoliday() {
-    if (!newHolidayLabel.trim()) return;
+    if (!newHolidayLabel.trim() || !newHolidayDate) return;
     const entry = { date:newHolidayDate, label:newHolidayLabel.trim() };
-    if (newHolidayMulti && newHolidayEnd > newHolidayDate) entry.endDate = newHolidayEnd;
+    if (newHolidayMulti && newHolidayEnd && newHolidayEnd > newHolidayDate) entry.endDate = newHolidayEnd;
     setConfig(c => ({
       ...c,
       holidays: [...c.holidays, entry].sort((a,b) => a.date.localeCompare(b.date)),
     }));
     setNewHolidayLabel('');
     setNewHolidayMulti(false);
+    setNewHolidayDate(null);
+    setNewHolidayEnd(null);
   }
   function removeHoliday(idx) {
     setConfig(c => ({ ...c, holidays: c.holidays.filter((_,i) => i!==idx) }));
@@ -135,9 +170,11 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
   }
 
   function addExam() {
-    if (!newExamName.trim()) return;
+    if (!newExamName.trim() || !newExamStart || !newExamEnd) return;
     setConfig(c => ({ ...c, exams: [...c.exams, { name:newExamName.trim(), startDate:newExamStart, endDate:newExamEnd }] }));
     setNewExamName('');
+    setNewExamStart(null);
+    setNewExamEnd(null);
   }
   function removeExam(idx) {
     setConfig(c => ({ ...c, exams: c.exams.filter((_,i) => i!==idx) }));
@@ -216,8 +253,7 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
             <View className="mb-5">
               <SectionLabel>Semester Length</SectionLabel>
               <View className="flex-row gap-2">
-                <DateChip label="Start" value={config.semStart} onChange={d => update(d > config.semEnd ? { semStart:d, semEnd:d } : { semStart:d })} />
-                <DateChip label="End"   value={config.semEnd}   onChange={d => update(d < config.semStart ? { semEnd:d, semStart:d } : { semEnd:d })} />
+                <DateRangeChip from={config.semStart} to={config.semEnd} onChange={(s,e) => update({ semStart:s, semEnd:e })} />
               </View>
             </View>
 
@@ -228,9 +264,11 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
               <SectionLabel>Holidays</SectionLabel>
               {config.holidays.map((h, i) => (
                 <View key={h.date+i} className="flex-row flex-wrap items-center gap-1.5 mb-1.5">
-                  <DateChip label="Date" value={h.date} onChange={d => updateHoliday(i, { date:d })} />
-                  {h.endDate != null && (
-                    <DateChip label="Through" value={h.endDate} onChange={d => updateHoliday(i, { endDate:d })} />
+                  {h.endDate != null ? (
+                    <DateRangeChip fromLabel="Date" toLabel="Through" from={h.date} to={h.endDate}
+                      onChange={(s,e) => updateHoliday(i, { date:s, endDate:e })} />
+                  ) : (
+                    <DateChip label="Date" value={h.date} onChange={d => updateHoliday(i, { date:d })} />
                   )}
                   <TextInput
                     value={h.label}
@@ -247,9 +285,11 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                 </View>
               ))}
               <View className="flex-row flex-wrap items-center gap-1.5 mt-1">
-                <DateChip label="Date" value={newHolidayDate} onChange={setNewHolidayDate} />
-                {newHolidayMulti && (
-                  <DateChip label="Through" value={newHolidayEnd} onChange={setNewHolidayEnd} />
+                {newHolidayMulti ? (
+                  <DateRangeChip fromLabel="Date" toLabel="Through" from={newHolidayDate} to={newHolidayEnd}
+                    onChange={(s,e) => { setNewHolidayDate(s); setNewHolidayEnd(e); }} />
+                ) : (
+                  <DateChip label="Date" value={newHolidayDate} onChange={setNewHolidayDate} />
                 )}
                 <TextInput
                   value={newHolidayLabel}
@@ -285,8 +325,7 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                     <RemoveBtn onPress={() => removeExam(i)} />
                   </View>
                   <View className="flex-row flex-wrap gap-2">
-                    <DateChip label="Start" value={e.startDate} onChange={d => updateExam(i, d > e.endDate ? { startDate:d, endDate:d } : { startDate:d })} />
-                    <DateChip label="End"   value={e.endDate}   onChange={d => updateExam(i, d < e.startDate ? { endDate:d, startDate:d } : { endDate:d })} />
+                    <DateRangeChip from={e.startDate} to={e.endDate} onChange={(s,en) => updateExam(i, { startDate:s, endDate:en })} />
                   </View>
                 </View>
               ))}
@@ -299,8 +338,7 @@ export default function SettingsModal({ visible, onClose, config, setConfig, use
                   className="font-sans text-[13px] text-ink mb-1.5"
                 />
                 <View className="flex-row flex-wrap items-center gap-2">
-                  <DateChip label="Start" value={newExamStart} onChange={d => { setNewExamStart(d); if (d > newExamEnd) setNewExamEnd(d); }} />
-                  <DateChip label="End"   value={newExamEnd}   onChange={d => { setNewExamEnd(d); if (d < newExamStart) setNewExamStart(d); }} />
+                  <DateRangeChip from={newExamStart} to={newExamEnd} onChange={(s,e) => { setNewExamStart(s); setNewExamEnd(e); }} />
                   <Pressable onPress={addExam} className="border border-cyan bg-cyandim rounded-[7px] p-1.5 shrink-0">
                     <Ionicons name="add" size={16} color="#2DD4BF" />
                   </Pressable>
